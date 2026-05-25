@@ -1,7 +1,12 @@
 import { Router, type Request, type Response } from 'express'
+import crypto from 'crypto'
 import { getDb, getWeekKey, isRegistrationOpen, getNextOpenTime } from '../db.js'
 
 const router = Router()
+
+function hashPassword(password: string): string {
+  return crypto.createHash('sha256').update(password).digest('hex')
+}
 
 router.get('/status', (req: Request, res: Response): void => {
   const db = getDb()
@@ -108,9 +113,10 @@ router.get('/registrations', (req: Request, res: Response): void => {
 
 router.post('/export-all', (req: Request, res: Response): void => {
   const { password } = req.body
-  const exportPassword = process.env.EXPORT_PASSWORD || 'tennis2024'
 
-  if (!password || password !== exportPassword) {
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+
+  if (!password || hashPassword(password) !== storedHash) {
     res.status(403).json({ success: false, message: '口令错误' })
     return
   }
