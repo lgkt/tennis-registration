@@ -25,20 +25,10 @@ router.get('/status', (req: Request, res: Response): void => {
 })
 
 router.post('/register', (req: Request, res: Response): void => {
-  const { name, phone, classDay } = req.body
+  const { name, classDay } = req.body
 
   if (!name || !name.trim()) {
     res.status(400).json({ success: false, message: '请输入姓名' })
-    return
-  }
-
-  if (!phone || !phone.trim()) {
-    res.status(400).json({ success: false, message: '请输入手机号' })
-    return
-  }
-
-  if (!/^1\d{10}$/.test(phone.trim())) {
-    res.status(400).json({ success: false, message: '请输入正确的手机号' })
     return
   }
 
@@ -66,7 +56,7 @@ router.post('/register', (req: Request, res: Response): void => {
 
   const result = db.prepare(
     'INSERT INTO registrations (name, phone, class_day, week_key) VALUES (?, ?, ?, ?)'
-  ).run(name.trim(), phone.trim(), classDay, weekKey)
+  ).run(name.trim(), '', classDay, weekKey)
 
   const registration = db.prepare(
     'SELECT * FROM registrations WHERE id = ?'
@@ -84,7 +74,6 @@ router.post('/register', (req: Request, res: Response): void => {
     registration: {
       id: registration.id,
       name: registration.name,
-      phone: registration.phone,
       classDay: registration.class_day,
       createdAt: registration.created_at,
     },
@@ -110,12 +99,51 @@ router.get('/registrations', (req: Request, res: Response): void => {
     registrations: registrations.map(r => ({
       id: r.id,
       name: r.name,
-      phone: r.phone,
       classDay: r.class_day,
       createdAt: r.created_at,
       weekKey: r.week_key,
     })),
   })
+})
+
+router.post('/export-all', (req: Request, res: Response): void => {
+  const { password } = req.body
+  const exportPassword = process.env.EXPORT_PASSWORD || 'tennis2024'
+
+  if (!password || password !== exportPassword) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+
+  const db = getDb()
+
+  const registrations = db.prepare(
+    'SELECT * FROM registrations ORDER BY week_key, class_day, created_at'
+  ).all() as Array<{
+    name: string
+    class_day: string
+    created_at: string
+    week_key: string
+  }>
+
+  const dayMap: Record<string, string> = {
+    tuesday: '周二',
+    wednesday: '周三',
+  }
+
+  const header = '姓名,上课日,报名日期,所属周'
+  const rows = registrations.map(r =>
+    `${r.name},${dayMap[r.class_day] || r.class_day},${r.created_at},${r.week_key}`
+  ).join('\n')
+
+  const bom = '\uFEFF'
+  const csv = `${bom}${header}\n${rows}`
+
+  const now = new Date()
+  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="tennis-all-registrations-${ts}.csv"`)
+  res.send(csv)
 })
 
 router.get('/export', (req: Request, res: Response): void => {
@@ -126,7 +154,6 @@ router.get('/export', (req: Request, res: Response): void => {
     'SELECT * FROM registrations WHERE week_key = ? ORDER BY class_day, created_at'
   ).all(week) as Array<{
     name: string
-    phone: string
     class_day: string
     created_at: string
   }>
@@ -136,9 +163,9 @@ router.get('/export', (req: Request, res: Response): void => {
     wednesday: '周三',
   }
 
-  const header = '姓名,手机号,上课日,报名时间'
+  const header = '姓名,上课日,报名时间'
   const rows = registrations.map(r =>
-    `${r.name},${r.phone},${dayMap[r.class_day] || r.class_day},${r.created_at}`
+    `${r.name},${dayMap[r.class_day] || r.class_day},${r.created_at}`
   ).join('\n')
 
   const bom = '\uFEFF'

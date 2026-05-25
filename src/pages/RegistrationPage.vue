@@ -42,6 +42,7 @@
               ]"
             >
               <div class="text-xs text-gray-400 mb-1">周二</div>
+              <div class="text-xs text-gray-300 mb-2">{{ weekDates.tuesday }}</div>
               <div class="text-3xl font-bold" :class="status.tuesday >= 10 ? 'text-gray-400' : 'text-[#2D8A4E]'">
                 {{ status.tuesday }}
               </div>
@@ -69,6 +70,7 @@
               ]"
             >
               <div class="text-xs text-gray-400 mb-1">周三</div>
+              <div class="text-xs text-gray-300 mb-2">{{ weekDates.wednesday }}</div>
               <div class="text-3xl font-bold" :class="status.wednesday >= 10 ? 'text-gray-400' : 'text-[#2D8A4E]'">
                 {{ status.wednesday }}
               </div>
@@ -105,20 +107,6 @@
                 <p v-if="errors.name" class="text-red-400 text-xs mt-1">{{ errors.name }}</p>
               </div>
 
-              <div class="mb-4">
-                <label class="block text-sm text-gray-500 mb-1.5">
-                  手机号 <span class="text-red-400">*</span>
-                </label>
-                <input
-                  v-model="form.phone"
-                  type="tel"
-                  placeholder="请输入手机号"
-                  maxlength="11"
-                  class="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-[#2D8A4E] focus:ring-2 focus:ring-[#2D8A4E]/20 outline-none transition-all text-sm"
-                />
-                <p v-if="errors.phone" class="text-red-400 text-xs mt-1">{{ errors.phone }}</p>
-              </div>
-
               <div class="mb-6">
                 <label class="block text-sm text-gray-500 mb-1.5">
                   上课日 <span class="text-red-400">*</span>
@@ -137,7 +125,8 @@
                           : 'border-gray-200 bg-white text-gray-600 hover:border-[#2D8A4E]/30'
                     ]"
                   >
-                    周二
+                    <div>周二</div>
+                    <div class="text-xs mt-0.5 opacity-70">{{ weekDates.tuesday }}</div>
                     <span v-if="status.tuesday >= 10" class="block text-xs mt-0.5">名额已满</span>
                   </button>
                   <button
@@ -153,7 +142,8 @@
                           : 'border-gray-200 bg-white text-gray-600 hover:border-[#2D8A4E]/30'
                     ]"
                   >
-                    周三
+                    <div>周三</div>
+                    <div class="text-xs mt-0.5 opacity-70">{{ weekDates.wednesday }}</div>
                     <span v-if="status.wednesday >= 10" class="block text-xs mt-0.5">名额已满</span>
                   </button>
                 </div>
@@ -213,17 +203,47 @@ const status = reactive<StatusData>({
 
 const form = reactive({
   name: '',
-  phone: '',
   classDay: '',
 })
 
 const errors = reactive({
   name: '',
-  phone: '',
   classDay: '',
 })
 
 const STORAGE_KEY = 'tennis_last_form'
+
+function getWeekDates() {
+  const now = new Date()
+  const beijingOffset = 8 * 60
+  const localOffset = now.getTimezoneOffset()
+  const beijingTime = new Date(now.getTime() + (localOffset + beijingOffset) * 60 * 1000)
+
+  const dayOfWeek = beijingTime.getDay()
+  let daysToMonday: number
+  if (dayOfWeek === 0) {
+    daysToMonday = -6
+  } else {
+    daysToMonday = 1 - dayOfWeek
+  }
+
+  const monday = new Date(beijingTime)
+  monday.setDate(monday.getDate() + daysToMonday)
+
+  const tuesday = new Date(monday)
+  tuesday.setDate(tuesday.getDate() + 1)
+
+  const wednesday = new Date(monday)
+  wednesday.setDate(wednesday.getDate() + 2)
+
+  const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`
+  return {
+    tuesday: fmt(tuesday),
+    wednesday: fmt(wednesday),
+  }
+}
+
+const weekDates = getWeekDates()
 
 function loadLastForm() {
   try {
@@ -231,7 +251,6 @@ function loadLastForm() {
     if (saved) {
       const data = JSON.parse(saved)
       form.name = data.name || ''
-      form.phone = data.phone || ''
       form.classDay = data.classDay || ''
     }
   } catch {
@@ -242,7 +261,6 @@ function saveForm() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       name: form.name,
-      phone: form.phone,
       classDay: form.classDay,
     }))
   } catch {
@@ -252,19 +270,10 @@ function saveForm() {
 function validate(): boolean {
   let valid = true
   errors.name = ''
-  errors.phone = ''
   errors.classDay = ''
 
   if (!form.name.trim()) {
     errors.name = '请输入姓名'
-    valid = false
-  }
-
-  if (!form.phone.trim()) {
-    errors.phone = '请输入手机号'
-    valid = false
-  } else if (!/^1\d{10}$/.test(form.phone.trim())) {
-    errors.phone = '请输入正确的11位手机号'
     valid = false
   }
 
@@ -328,7 +337,6 @@ async function handleSubmit() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: form.name.trim(),
-        phone: form.phone.trim(),
         classDay: form.classDay,
       }),
     })

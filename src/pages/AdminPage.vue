@@ -15,10 +15,10 @@
             <option v-for="w in availableWeeks" :key="w" :value="w">{{ w }}</option>
           </select>
           <button
-            @click="exportCsv"
+            @click="goExport"
             class="px-4 py-2 rounded-lg bg-[#2D8A4E] text-white text-sm font-medium hover:bg-[#237a3f] transition-all"
           >
-            导出 CSV
+            导出报名列表
           </button>
           <button
             @click="goHome"
@@ -64,7 +64,6 @@
               <tr class="border-b border-gray-100">
                 <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">序号</th>
                 <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">姓名</th>
-                <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">手机号</th>
                 <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">上课日</th>
                 <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">报名时间</th>
               </tr>
@@ -77,7 +76,6 @@
               >
                 <td class="px-5 py-3.5 text-sm text-gray-400">{{ index + 1 }}</td>
                 <td class="px-5 py-3.5 text-sm text-gray-700">{{ r.name }}</td>
-                <td class="px-5 py-3.5 text-sm text-gray-500">{{ r.phone }}</td>
                 <td class="px-5 py-3.5">
                   <span
                     :class="[
@@ -110,7 +108,6 @@ const selectedWeek = ref('')
 const registrations = ref<Array<{
   id: number
   name: string
-  phone: string
   classDay: string
   createdAt: string
 }>>([])
@@ -168,8 +165,8 @@ async function fetchRegistrations() {
   }
 }
 
-function exportCsv() {
-  window.open(`/api/export?week=${selectedWeek.value}`, '_blank')
+function goExport() {
+  router.push('/export')
 }
 
 function goHome() {
