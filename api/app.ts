@@ -21,6 +21,16 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 /**
+ * Disable caching for all API responses
+ */
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+  res.setHeader('Pragma', 'no-cache')
+  res.setHeader('Expires', '0')
+  next()
+})
+
+/**
  * API Routes
  */
 app.use('/api', registrationRoutes)
@@ -36,10 +46,16 @@ app.use(
 )
 
 /**
- * Serve frontend static files
+ * Serve frontend static files with no-cache
  */
 const distPath = path.join(__dirname, '..', 'dist')
-app.use(express.static(distPath))
+app.use(express.static(distPath, {
+  setHeaders: (res: Response) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+    res.setHeader('Pragma', 'no-cache')
+    res.setHeader('Expires', '0')
+  },
+}))
 
 /**
  * SPA fallback: serve index.html for all non-API routes

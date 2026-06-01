@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
-import { getDb, getWeekKey, isRegistrationOpen, getNextOpenTime } from '../db.js'
+import { getDb, getWeekKey, isRegistrationOpen, getNextOpenTime, getClassDate, getWeekDates, getSetting, setSetting } from '../db.js'
 
 const router = Router()
 
@@ -8,10 +8,20 @@ function hashPassword(password: string): string {
   return crypto.createHash('sha256').update(password).digest('hex')
 }
 
+function getMaxOrDefault(key: string, defaultVal: number): number {
+  const val = getSetting(key)
+  return val ? parseInt(val, 10) || defaultVal : defaultVal
+}
+
 router.get('/status', (req: Request, res: Response): void => {
   const db = getDb()
   const weekKey = getWeekKey()
   const open = isRegistrationOpen()
+  const forceOpen = getSetting('force_open') === 'true'
+  const maxTuesday = getMaxOrDefault('max_tuesday', 10)
+  const maxWednesday = getMaxOrDefault('max_wednesday', 10)
+  const multiDayEnabled = getSetting('multi_day_enabled') === 'true'
+  const weekDates = getWeekDates()
 
   const tuesdayCount = db.prepare(
     'SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?'
@@ -24,25 +34,111 @@ router.get('/status', (req: Request, res: Response): void => {
   res.json({
     tuesday: tuesdayCount.count,
     wednesday: wednesdayCount.count,
-    isOpen: open,
-    nextOpenTime: open ? null : getNextOpenTime(),
+    maxTuesday,
+    maxWednesday,
+    multiDayEnabled,
+    isOpen: open || forceOpen,
+    forceOpen: forceOpen,
+    nextOpenTime: (open || forceOpen) ? null : getNextOpenTime(),
+    weekDates: weekDates,
   })
 })
 
+router.get('/check-member', (req: Request, res: Response): void => {
+  try {
+    const name = (req.query.name as string || '').trim()
+    const db = getDb()
+    const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
+
+    if (!member) {
+      res.json({ isValid: false, message: '您不是网球小组成员，请联系网球小组组长' })
+      return
+    }
+
+    const weekKey = getWeekKey()
+    const existingDays = db.prepare(
+      'SELECT class_day FROM registrations WHERE week_key = ? AND name = ?'
+    ).all(weekKey, name.trim()) as Array<{ class_day: string }>
+
+    res.json({
+      isValid: true,
+      message: '您是网球小组成员，请继续报名',
+      source: member.source,
+      existingRegistrations: existingDays.map(r => ({ classDay: r.class_day })),
+    })
+  } catch (error) {
+    console.error('check-member error:', error)
+    res.status(500).json({ isValid: false, message: '校验服务异常，请稍后重试' })
+  }
+})
+
+router.post('/check-member', (req: Request, res: Response): void => {
+  try {
+    const name = (req.body.name || '').trim()
+    if (!name) {
+      res.status(400).json({ isValid: false, message: '请输入姓名' })
+      return
+    }
+    const db = getDb()
+    const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
+
+    if (!member) {
+      res.json({ isValid: false, message: '您不是网球小组成员，请联系网球小组组长' })
+      return
+    }
+
+    const weekKey = getWeekKey()
+    const existingDays = db.prepare(
+      'SELECT class_day FROM registrations WHERE week_key = ? AND name = ?'
+    ).all(weekKey, name.trim()) as Array<{ class_day: string }>
+
+    res.json({
+      isValid: true,
+      message: '您是网球小组成员，请继续报名',
+      source: member.source,
+      existingRegistrations: existingDays.map(r => ({ classDay: r.class_day })),
+    })
+  } catch (error) {
+    console.error('check-member error:', error)
+    res.status(500).json({ isValid: false, message: '校验服务异常，请稍后重试' })
+  }
+})
+
+router.post('/registrations/clear', (req: Request, res: Response): void => {
+  const { password, scope } = req.body
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+  const db = getDb()
+  if (scope === 'week') {
+    const weekKey = getWeekKey()
+    db.prepare('DELETE FROM registrations WHERE week_key = ?').run(weekKey)
+    res.json({ success: true, message: '本周报名记录已清空' })
+  } else {
+    db.prepare('DELETE FROM registrations').run()
+    res.json({ success: true, message: '所有报名记录已清空' })
+  }
+})
+
 router.post('/register', (req: Request, res: Response): void => {
-  const { name, classDay } = req.body
+  const { name, classDay, classDays } = req.body
 
   if (!name || !name.trim()) {
     res.status(400).json({ success: false, message: '请输入姓名' })
     return
   }
 
-  if (!['tuesday', 'wednesday'].includes(classDay)) {
+  const days = classDays || (classDay ? [classDay] : [])
+  if (days.length === 0 || !days.every((d: string) => ['tuesday', 'wednesday'].includes(d))) {
     res.status(400).json({ success: false, message: '请选择上课日' })
     return
   }
 
-  if (!isRegistrationOpen()) {
+  const open = isRegistrationOpen()
+  const forceOpen = getSetting('force_open') === 'true'
+  if (!open && !forceOpen) {
     res.status(403).json({ success: false, message: '报名未开放' })
     return
   }
@@ -50,38 +146,67 @@ router.post('/register', (req: Request, res: Response): void => {
   const db = getDb()
   const weekKey = getWeekKey()
 
-  const count = db.prepare(
-    'SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?'
-  ).get(weekKey, classDay) as { count: number }
-
-  if (count.count >= 10) {
-    res.status(400).json({ success: false, message: '该上课日名额已满' })
+  const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
+  if (!member) {
+    res.status(403).json({ success: false, message: '您不是网球小组成员，请联系网球小组组长' })
     return
   }
 
-  const result = db.prepare(
-    'INSERT INTO registrations (name, phone, class_day, week_key) VALUES (?, ?, ?, ?)'
-  ).run(name.trim(), '', classDay, weekKey)
+  const maxTuesday = getMaxOrDefault('max_tuesday', 10)
+  const maxWednesday = getMaxOrDefault('max_wednesday', 10)
 
-  const registration = db.prepare(
-    'SELECT * FROM registrations WHERE id = ?'
-  ).get(result.lastInsertRowid) as {
-    id: number
-    name: string
-    phone: string
-    class_day: string
-    created_at: string
+  const results: Array<{ classDay: string; classDate: string; success: boolean; message?: string }> = []
+
+  for (const day of days) {
+    const existing = db.prepare(
+      'SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? LIMIT 1'
+    ).get(weekKey, name.trim(), day) as { id: number } | undefined
+
+    if (existing) {
+      const dayLabel = day === 'tuesday' ? '周二' : '周三'
+      const dayDate = getClassDate(day, weekKey)
+      results.push({ classDay: day, classDate: dayDate, success: false, message: `您当周已报名${dayLabel}（${dayDate}）` })
+      continue
+    }
+
+    const maxCap = day === 'tuesday' ? maxTuesday : maxWednesday
+    const count = db.prepare(
+      'SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?'
+    ).get(weekKey, day) as { count: number }
+
+    if (count.count >= maxCap) {
+      results.push({ classDay: day, classDate: '', success: false, message: '该上课日名额已满' })
+      continue
+    }
+
+    const classDate = getClassDate(day)
+
+    db.prepare(
+      'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(name.trim(), '', day, classDate, member.source, weekKey)
+
+    results.push({ classDay: day, classDate, success: true })
   }
+
+  const allSuccess = results.every(r => r.success)
+  const anySuccess = results.some(r => r.success)
+
+  if (!anySuccess) {
+    res.status(400).json({
+      success: false,
+      message: results.map(r => r.message).filter(Boolean).join('；'),
+      results,
+    })
+    return
+  }
+
+  const successDays = results.filter(r => r.success).map(r => r.classDay)
 
   res.json({
     success: true,
-    message: '报名成功',
-    registration: {
-      id: registration.id,
-      name: registration.name,
-      classDay: registration.class_day,
-      createdAt: registration.created_at,
-    },
+    message: allSuccess ? '报名成功' : '部分报名成功',
+    classDays: successDays,
+    results,
   })
 })
 
@@ -96,6 +221,8 @@ router.get('/registrations', (req: Request, res: Response): void => {
     name: string
     phone: string
     class_day: string
+    class_date: string
+    source: string
     created_at: string
     week_key: string
   }>
@@ -105,10 +232,114 @@ router.get('/registrations', (req: Request, res: Response): void => {
       id: r.id,
       name: r.name,
       classDay: r.class_day,
+      classDate: r.class_date,
+      source: r.source,
       createdAt: r.created_at,
       weekKey: r.week_key,
     })),
   })
+})
+
+router.post('/reschedule', (req: Request, res: Response): void => {
+  const { password, id, newClassDay } = req.body
+
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+
+  if (!id || !newClassDay || !['tuesday', 'wednesday'].includes(newClassDay)) {
+    res.status(400).json({ success: false, message: '参数错误' })
+    return
+  }
+
+  const db = getDb()
+  const registration = db.prepare('SELECT * FROM registrations WHERE id = ?').get(id) as any
+  if (!registration) {
+    res.status(404).json({ success: false, message: '报名记录不存在' })
+    return
+  }
+
+  if (registration.class_day === newClassDay) {
+    res.json({ success: true, message: '已为当前时间，无需调整' })
+    return
+  }
+
+  const maxCap = newClassDay === 'tuesday' ? getMaxOrDefault('max_tuesday', 10) : getMaxOrDefault('max_wednesday', 10)
+  const count = db.prepare('SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?').get(registration.week_key, newClassDay) as { count: number }
+  if (count.count >= maxCap) {
+    res.status(400).json({ success: false, message: '目标时间名额已满' })
+    return
+  }
+
+  const newClassDate = getClassDate(newClassDay, registration.week_key)
+  db.prepare('UPDATE registrations SET class_day = ?, class_date = ? WHERE id = ?').run(newClassDay, newClassDate, id)
+
+  res.json({ success: true, message: '调课成功' })
+})
+
+router.get('/members', (req: Request, res: Response): void => {
+  const db = getDb()
+  const members = db.prepare('SELECT * FROM members ORDER BY id').all() as Array<{ id: number; name: string; source: string }>
+  res.json({ members: members })
+})
+
+router.post('/members/import', (req: Request, res: Response): void => {
+  const { password, data } = req.body
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+
+  const db = getDb()
+  const insert = db.prepare('INSERT OR REPLACE INTO members (name, source) VALUES (?, ?)')
+  let successCount = 0
+  for (const m of data || []) {
+    if (m.name && m.source && ['CNCC', 'CFID', 'SQQ'].includes(m.source)) {
+      insert.run(m.name.trim(), m.source)
+      successCount++
+    }
+  }
+
+  res.json({ success: true, successCount })
+})
+
+router.get('/members/export-template', (req: Request, res: Response): void => {
+  const bom = '\uFEFF'
+  const header = '姓名,来自'
+  const csv = `${bom}${header}\n`
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="members-template.csv"`)
+  res.send(csv)
+})
+
+router.get('/members/export', (req: Request, res: Response): void => {
+  const db = getDb()
+  const members = db.prepare('SELECT * FROM members ORDER BY id').all() as Array<{ name: string; source: string }>
+  const bom = '\uFEFF'
+  const header = '姓名,来自'
+  const rows = members.map(m => `${m.name},${m.source}`).join('\n')
+  const csv = `${bom}${header}\n${rows}`
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="members.csv"`)
+  res.send(csv)
+})
+
+router.post('/members/delete', (req: Request, res: Response): void => {
+  const { password, id } = req.body
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+  const db = getDb()
+  db.prepare('DELETE FROM members WHERE id = ?').run(id)
+  res.json({ success: true })
 })
 
 router.post('/export-all', (req: Request, res: Response): void => {
@@ -128,6 +359,8 @@ router.post('/export-all', (req: Request, res: Response): void => {
   ).all() as Array<{
     name: string
     class_day: string
+    class_date: string
+    source: string
     created_at: string
     week_key: string
   }>
@@ -137,9 +370,9 @@ router.post('/export-all', (req: Request, res: Response): void => {
     wednesday: '周三',
   }
 
-  const header = '姓名,上课日,报名日期,所属周'
+  const header = '姓名,来自,上课日,上课日期,报名日期,所属周'
   const rows = registrations.map(r =>
-    `${r.name},${dayMap[r.class_day] || r.class_day},${r.created_at},${r.week_key}`
+    `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${r.created_at},${r.week_key}`
   ).join('\n')
 
   const bom = '\uFEFF'
@@ -161,6 +394,8 @@ router.get('/export', (req: Request, res: Response): void => {
   ).all(week) as Array<{
     name: string
     class_day: string
+    class_date: string
+    source: string
     created_at: string
   }>
 
@@ -169,9 +404,9 @@ router.get('/export', (req: Request, res: Response): void => {
     wednesday: '周三',
   }
 
-  const header = '姓名,上课日,报名时间'
+  const header = '姓名,来自,上课日,上课日期,报名时间'
   const rows = registrations.map(r =>
-    `${r.name},${dayMap[r.class_day] || r.class_day},${r.created_at}`
+    `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${r.created_at}`
   ).join('\n')
 
   const bom = '\uFEFF'
@@ -180,6 +415,64 @@ router.get('/export', (req: Request, res: Response): void => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
   res.setHeader('Content-Disposition', `attachment; filename="tennis-registrations-${week}.csv"`)
   res.send(csv)
+})
+
+router.get('/statistics', (req: Request, res: Response): void => {
+  const year = (req.query.year as string) || new Date().getFullYear().toString()
+  const db = getDb()
+
+  const data = db.prepare(`
+    SELECT m.name, m.source,
+      COALESCE(r.total_count, 0) as total_count,
+      COALESCE(r.tuesday_count, 0) as tuesday_count,
+      COALESCE(r.wednesday_count, 0) as wednesday_count
+    FROM members m
+    LEFT JOIN (
+      SELECT name,
+        COUNT(*) as total_count,
+        SUM(CASE WHEN class_day = 'tuesday' THEN 1 ELSE 0 END) as tuesday_count,
+        SUM(CASE WHEN class_day = 'wednesday' THEN 1 ELSE 0 END) as wednesday_count
+      FROM registrations
+      WHERE week_key LIKE ?
+      GROUP BY name
+    ) r ON m.name = r.name
+    ORDER BY total_count DESC, m.name
+  `).all(`${year}%`)
+
+  res.json({ year, data })
+})
+
+router.post('/auth-admin', (req: Request, res: Response): void => {
+  const { password } = req.body
+
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+
+  res.json({ success: true })
+})
+
+router.get('/settings', (req: Request, res: Response): void => {
+  const forceOpen = getSetting('force_open') === 'true'
+  const maxTuesday = getMaxOrDefault('max_tuesday', 10)
+  const maxWednesday = getMaxOrDefault('max_wednesday', 10)
+  const multiDayEnabled = getSetting('multi_day_enabled') === 'true'
+  res.json({ forceOpen, maxTuesday, maxWednesday, multiDayEnabled })
+})
+
+router.post('/settings', (req: Request, res: Response): void => {
+  const { key, value } = req.body
+
+  if (!key) {
+    res.status(400).json({ success: false, message: '参数错误' })
+    return
+  }
+
+  setSetting(key, String(value))
+  res.json({ success: true, key, value: String(value) })
 })
 
 export default router

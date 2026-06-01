@@ -16,13 +16,13 @@
             <span class="text-gray-400">姓名</span>
             <span class="text-gray-700 font-medium">{{ name }}</span>
           </div>
-          <div class="flex justify-between text-sm">
-            <span class="text-gray-400">上课日</span>
-            <span class="text-gray-700 font-medium">{{ classDayLabel }}</span>
+          <div v-for="(label, index) in classDayLabels" :key="index" class="flex justify-between text-sm">
+            <span class="text-gray-400">上课日{{ classDayLabels.length > 1 ? index + 1 : '' }}</span>
+            <span class="text-gray-700 font-medium">{{ label }}</span>
           </div>
         </div>
 
-        <p class="text-xs text-gray-400 mb-6">请按时上课，如有变动请提前联系教练</p>
+        <p class="text-xs text-gray-400 mb-6">请按时上课，如有变动请提前联系网球小组组长</p>
 
         <button
           @click="goHome"
@@ -43,10 +43,55 @@ const router = useRouter()
 const route = useRoute()
 
 const name = route.query.name as string || ''
-const classDay = route.query.classDay as string || ''
+const classDaysStr = route.query.classDays as string || ''
+const classDays = classDaysStr ? classDaysStr.split(',').filter(Boolean) : []
 
-const classDayLabel = computed(() => {
-  return classDay === 'tuesday' ? '周二' : classDay === 'wednesday' ? '周三' : ''
+function getWeekDates() {
+  const now = new Date()
+  const beijingOffset = 8 * 60
+  const localOffset = now.getTimezoneOffset()
+  const beijingTime = new Date(now.getTime() + (localOffset + beijingOffset) * 60 * 1000)
+
+  const dayOfWeek = beijingTime.getDay()
+  let daysToMonday: number
+  if (dayOfWeek === 0) {
+    daysToMonday = -6
+  } else {
+    daysToMonday = 1 - dayOfWeek
+  }
+
+  const monday = new Date(beijingTime)
+  monday.setDate(monday.getDate() + daysToMonday)
+
+  const tuesday = new Date(monday)
+  tuesday.setDate(tuesday.getDate() + 1)
+
+  const wednesday = new Date(monday)
+  wednesday.setDate(wednesday.getDate() + 2)
+
+  const fmt = (d: Date) => `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+  return {
+    tuesday: fmt(tuesday),
+    wednesday: fmt(wednesday),
+  }
+}
+
+const weekDates = getWeekDates()
+
+const dayLabelMap: Record<string, string> = {
+  tuesday: '周二',
+  wednesday: '周三',
+}
+
+const classDayLabels = computed(() => {
+  const dayOrder: Record<string, number> = { tuesday: 0, wednesday: 1 }
+  return [...classDays]
+    .sort((a, b) => (dayOrder[a] || 0) - (dayOrder[b] || 0))
+    .map(d => {
+      const label = dayLabelMap[d] || d
+      const date = d === 'tuesday' ? weekDates.tuesday : d === 'wednesday' ? weekDates.wednesday : ''
+      return `${label}（${date}）`
+    })
 })
 
 function goHome() {
