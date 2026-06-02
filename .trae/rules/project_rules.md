@@ -98,3 +98,22 @@ cd /workspace && npx tsx api/server.ts
 - 沙箱环境的 IDE 代理（16000 端口）不兼容中文 URL 编码的查询参数，中文名 GET 请求会返回 400
 - **所有涉及中文参数的 API，必须用 POST + JSON body 传参，禁止用 GET 查询参数传中文**
 - 这条规则适用于新增 API 和修改现有 API
+
+## 后台管理密码持久化（踩坑经验）
+- 用户登入后仅重建 `authenticated` 状态到 `sessionStorage`（`AUTH_KEY = '1'`）是不够的
+- `adminPassword` 也必须保存到 `sessionStorage`（key: `tennis_admin_pwd`），否则页面刷新后所有需口令的操作（成员编辑/删除、清空报名、导出全部、调课）会因密码为空而返回"口令错误"
+- 页面挂载时恢复逻辑：`sessionStorage.getItem(AUTH_KEY) === '1'` → 同时恢复 `adminPassword` 和 `authenticated`
+- 如果用户是旧 session（只有 AUTH_KEY 没有密码），用自定义密码弹窗（`requestPassword()`）提示用户重新输入
+
+## 禁止使用 prompt() / alert() / confirm()
+- 沙箱预览环境（trae-preview）**不支持 `prompt()`**，调用会抛 `Error: prompt() is not supported.`
+- `confirm()` 和 `alert()` 在预览环境中也可能有兼容问题
+- 所有需要用户输入确认的场景，必须使用自定义 Vue 模态框替代
+- 后台已封装 `requestPassword(title?)` → Promise 模式密码弹窗，可直接 `await` 使用
+- 后台已有 `showNotification(msg, type)` 替代 `alert()`
+
+## 前端修改后浏览器缓存
+- `pnpm build` 后 Vite 输出的 JS/CSS 文件 hash 会变化，但用户浏览器可能缓存了旧文件
+- `prompt is not supported`、`成员编辑显示口令错误` 等异常，首先检查用户是否未硬刷新
+- 告知用户按 **Ctrl+F5**（Mac: Cmd+Shift+R）强制刷新清除缓存
+- 服务器响应头可加 Cache-Control 加速更新（已在 `api/app.ts` 配置）

@@ -59,6 +59,16 @@ function initDb() {
   } catch {
   }
 
+  try {
+    db.exec('ALTER TABLE registrations ADD COLUMN check_in_type TEXT')
+  } catch {
+  }
+
+  try {
+    db.exec('ALTER TABLE registrations ADD COLUMN check_in_time TEXT')
+  } catch {
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,

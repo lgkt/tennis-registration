@@ -50,6 +50,9 @@
     </div>
 
     <template v-else>
+      <div v-if="notification" class="fixed top-4 right-4 z-[100] px-5 py-3 rounded-xl shadow-lg text-sm max-w-sm transition-all" :class="notification.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-500 border border-red-200'">
+        {{ notification.message }}
+      </div>
       <div class="max-w-6xl mx-auto px-4 py-6">
         <div class="flex items-center justify-between mb-6">
           <div>
@@ -64,10 +67,19 @@
         </div>
 
         <template v-if="activeTab === 'registrations'">
-          <div class="flex items-center gap-2 mb-4">
+          <div class="flex items-center gap-2 mb-4 flex-wrap">
             <select v-model="selectedWeek" @change="fetchRegistrations" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
               <option v-for="w in availableWeeks" :key="w" :value="w">{{ w }}</option>
             </select>
+            <select v-model="registrationSourceFilter" @change="fetchRegistrations" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
+              <option value="">全部来源</option>
+              <option value="CNCC">CNCC</option>
+              <option value="CFID">CFID</option>
+              <option value="SQQ">SQQ</option>
+            </select>
+            <button @click="registrationSortBy = registrationSortBy === 'source' ? '' : 'source'; fetchRegistrations()" :class="['px-3 py-2 rounded-lg border text-sm transition-all', registrationSortBy === 'source' ? 'bg-[#2D8A4E]/10 border-[#2D8A4E] text-[#2D8A4E]' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50']">
+              来源排序 {{ registrationSortBy === 'source' ? '↓' : '' }}
+            </button>
             <button @click="exportThisWeek" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">导出本周</button>
             <button @click="exportAll" class="px-3 py-2 rounded-lg bg-[#2D8A4E] text-white text-sm hover:bg-[#237a3f] transition-all">导出全部</button>
             <div class="ml-auto flex items-center gap-2">
@@ -88,10 +100,6 @@
                 ></span>
               </button>
             </div>
-          </div>
-
-          <div v-if="notification" class="mb-4 px-4 py-3 rounded-xl text-sm" :class="notification.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-500 border border-red-200'">
-            {{ notification.message }}
           </div>
 
           <div v-if="loadingRegistrations" class="text-center py-12">
@@ -193,6 +201,31 @@
               </div>
             </div>
 
+            <div class="bg-white rounded-xl shadow-sm p-4 mb-4">
+              <button @click="showNotifSettings = !showNotifSettings" class="flex items-center justify-between w-full text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                <span class="font-medium">通知设置</span>
+                <svg :class="['w-4 h-4 transition-transform', showNotifSettings ? 'rotate-180' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div v-if="showNotifSettings" class="mt-4 space-y-3">
+                <textarea
+                  v-model="notificationText"
+                  rows="3"
+                  placeholder="输入通知内容，留空则不显示"
+                  class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-600 outline-none focus:border-[#2D8A4E] focus:bg-white resize-none"
+                ></textarea>
+                <button
+                  @click="saveNotificationText"
+                  :disabled="savingNotif || notificationIsSaved"
+                  class="px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:cursor-not-allowed"
+                  :class="savingNotif || notificationIsSaved ? 'bg-gray-200 text-gray-400' : 'bg-[#2D8A4E] text-white hover:bg-[#237a3f]'"
+                >
+                  {{ savingNotif ? '保存中…' : '保存通知' }}
+                </button>
+              </div>
+            </div>
+
             <div v-if="registrations.length === 0" class="bg-white rounded-2xl shadow-sm p-12 text-center">
               <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -212,7 +245,8 @@
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">上课日</th>
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">上课日期</th>
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">报名时间</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">操作</th>
+                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">签到</th>
+                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">调课</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -230,8 +264,19 @@
                     </td>
                     <td class="px-5 py-3.5 text-sm text-gray-500">{{ r.classDate }}</td>
                     <td class="px-5 py-3.5 text-sm text-gray-400">{{ r.createdAt }}</td>
-                    <td class="px-5 py-3.5 text-sm">
-                      <button @click="showReschedule(r)" class="text-[#2D8A4E] hover:text-[#237a3f] mr-2">调课</button>
+                    <td class="px-5 py-3.5 text-sm whitespace-nowrap">
+                      <template v-if="!r.checkInType">
+                        <button @click="doCheckIn(r.id)" :disabled="checkingIn" class="text-green-600 hover:text-green-700 text-xs">签到</button>
+                      </template>
+                      <template v-else-if="r.checkInType === 'scheduled'">
+                        <span class="text-green-600 text-xs">已签到<br>{{ r.checkInTime }}</span>
+                      </template>
+                      <template v-else>
+                        <span class="text-[#F5A623] text-xs">临时签到<br>{{ r.checkInTime }}</span>
+                      </template>
+                    </td>
+                    <td class="px-5 py-3.5 text-sm whitespace-nowrap">
+                      <button @click="showReschedule(r)" class="text-[#2D8A4E] hover:text-[#237a3f]">调课</button>
                     </td>
                   </tr>
                 </tbody>
@@ -242,6 +287,16 @@
 
         <template v-if="activeTab === 'members'">
           <div class="flex items-center gap-2 mb-4">
+            <button @click="isEditingMember = false; editingMemberId = null; memberForm = { name: '', source: 'CNCC' }; showMemberModal = true" class="px-3 py-2 rounded-lg bg-[#2D8A4E] text-white text-sm hover:bg-[#237a3f] transition-all">新增</button>
+            <select v-model="memberSourceFilter" @change="fetchMembers" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
+              <option value="">全部来源</option>
+              <option value="CNCC">CNCC</option>
+              <option value="CFID">CFID</option>
+              <option value="SQQ">SQQ</option>
+            </select>
+            <button @click="memberSortBy = memberSortBy === 'source' ? '' : 'source'; fetchMembers()" :class="['px-3 py-2 rounded-lg border text-sm transition-all', memberSortBy === 'source' ? 'bg-[#2D8A4E]/10 border-[#2D8A4E] text-[#2D8A4E]' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50']">
+              来源排序 {{ memberSortBy === 'source' ? '↓' : '' }}
+            </button>
             <button @click="downloadTemplate" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">下载模板</button>
             <label class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all cursor-pointer">
               导入成员
@@ -285,6 +340,7 @@
                     <td class="px-5 py-3.5 text-sm text-gray-700">{{ m.name }}</td>
                     <td class="px-5 py-3.5 text-sm text-gray-500">{{ m.source }}</td>
                     <td class="px-5 py-3.5 text-sm">
+                      <button @click="editMember(m)" class="text-[#2D8A4E] hover:text-[#237a3f] mr-2">编辑</button>
                       <button @click="deleteMember(m.id)" class="text-red-500 hover:text-red-600">删除</button>
                     </td>
                   </tr>
@@ -299,6 +355,12 @@
             <select v-model="selectedStatYear" @change="fetchStatistics" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
               <option v-for="y in availableYears" :key="y" :value="y">{{ y }} 年</option>
             </select>
+            <select v-model="statCheckInFilter" @change="fetchStatistics" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
+              <option value="">全部报名</option>
+              <option value="booked">预约统计</option>
+              <option value="scheduled">正常签到</option>
+              <option value="walkin">临时签到</option>
+            </select>
           </div>
 
           <div v-if="loadingStatistics" class="text-center py-12">
@@ -307,9 +369,9 @@
 
           <template v-else>
             <div class="bg-white rounded-xl px-5 py-3 shadow-sm mb-4">
-              <div class="text-xs text-gray-400">全年总报名</div>
-              <div class="text-xl font-bold text-[#2D8A4E]">{{ statisticsTotal }} 人次</div>
-            </div>
+                <div class="text-xs text-gray-400">全年总{{ statCheckInFilter ? (statCheckInFilter === 'booked' ? '预约报名' : statCheckInFilter === 'scheduled' ? '正常签到' : '临时签到') : '报名' }}</div>
+                <div class="text-xl font-bold text-[#2D8A4E]">{{ statisticsTotal }} 人次</div>
+              </div>
 
             <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
               <table class="w-full">
@@ -317,10 +379,18 @@
                   <tr class="border-b border-gray-100">
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium w-12">排名</th>
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">姓名</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">来自</th>
-                    <th class="text-center px-5 py-3 text-xs text-gray-400 font-medium">周二</th>
-                    <th class="text-center px-5 py-3 text-xs text-gray-400 font-medium">周三</th>
-                    <th class="text-center px-5 py-3 text-xs text-gray-400 font-medium">合计</th>
+                    <th @click="toggleStatSort('source')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="statSortBy === 'source' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      来自 {{ statSortBy === 'source' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleStatSort('tuesday')" class="text-center px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="statSortBy === 'tuesday' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      周二 {{ statSortBy === 'tuesday' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleStatSort('wednesday')" class="text-center px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="statSortBy === 'wednesday' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      周三 {{ statSortBy === 'wednesday' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleStatSort('total')" class="text-center px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="statSortBy === 'total' || !statSortBy ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      合计 {{ !statSortBy || statSortBy === 'total' ? '↓' : '' }}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -369,7 +439,63 @@
       </div>
     </div>
   </div>
-</template>
+
+  <div v-if="showMemberModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+    <div class="bg-white rounded-2xl p-6 w-80">
+      <h3 class="text-lg font-bold text-gray-700 mb-4">{{ isEditingMember ? '编辑成员' : '新增成员' }}</h3>
+      <div class="space-y-4">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">姓名</label>
+          <input
+            v-model="memberForm.name"
+            type="text"
+            placeholder="请输入姓名"
+            class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-[#2D8A4E] focus:ring-2 focus:ring-[#2D8A4E]/20 outline-none transition-all text-sm"
+          />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">来自</label>
+          <select
+            v-model="memberForm.source"
+            class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-600 outline-none focus:border-[#2D8A4E] focus:bg-white"
+          >
+            <option value="CNCC">CNCC</option>
+            <option value="CFID">CFID</option>
+            <option value="SQQ">SQQ</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-3 mt-6">
+        <button
+          @click="saveMember"
+          :disabled="savingMember"
+          class="flex-1 py-2.5 rounded-xl bg-[#2D8A4E] text-white font-medium text-sm hover:bg-[#237a3f] transition-all disabled:opacity-50"
+        >
+          {{ savingMember ? '保存中…' : '保存' }}
+        </button>
+        <button @click="showMemberModal = false" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="showPasswordModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-[200]">
+    <div class="bg-white rounded-2xl p-6 w-80">
+      <h3 class="text-lg font-bold text-gray-700 mb-4">{{ passwordModalTitle }}</h3>
+      <input
+        v-model="passwordModalInput"
+        type="password"
+        placeholder="管理口令"
+        class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none focus:border-[#2D8A4E] focus:bg-white mb-4"
+        @keyup.enter="confirmPasswordModal"
+      />
+      <div class="flex gap-3">
+        <button @click="cancelPasswordModal" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+        <button @click="confirmPasswordModal" class="flex-1 py-2.5 rounded-xl bg-[#2D8A4E] text-white font-medium text-sm hover:bg-[#237a3f] transition-all">确认</button>
+      </div>
+    </div>
+  </div>
+
+    </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
@@ -386,10 +512,17 @@ const loadingRegistrations = ref(false)
 const loadingMembers = ref(false)
 const selectedWeek = ref('')
 const selectedStatYear = ref(new Date().getFullYear().toString())
+const statCheckInFilter = ref('')
+const statSortBy = ref('')
 const availableYears = ref<string[]>([])
 const loadingStatistics = ref(false)
 const statisticsData = ref<any[]>([])
 const statisticsTotal = ref(0)
+const showMemberModal = ref(false)
+const isEditingMember = ref(false)
+const editingMemberId = ref<number | null>(null)
+const memberForm = ref({ name: '', source: 'CNCC' })
+const savingMember = ref(false)
 const activeTab = ref<'registrations' | 'members' | 'statistics'>('registrations')
 const registrations = ref<any[]>([])
 const members = ref<any[]>([])
@@ -412,8 +545,52 @@ const settings = reactive({
   maxWednesday: 10,
   multiDayEnabled: false,
 })
+const notificationText = ref('')
+const savedNotificationText = ref('')
+const notificationIsSaved = ref(true)
+watch(notificationText, () => {
+  notificationIsSaved.value = notificationText.value === savedNotificationText.value
+})
+let pendingPasswordResolve: ((pwd: string) => void) | null = null
+const showPasswordModal = ref(false)
+const passwordModalInput = ref('')
+const passwordModalTitle = ref('请输入管理口令')
+
+function requestPassword(title?: string): Promise<string> {
+  return new Promise((resolve) => {
+    passwordModalInput.value = ''
+    passwordModalTitle.value = title || '请输入管理口令'
+    showPasswordModal.value = true
+    pendingPasswordResolve = resolve
+  })
+}
+
+function confirmPasswordModal() {
+  const pwd = passwordModalInput.value.trim()
+  if (!pwd) return
+  adminPassword.value = pwd
+  try { sessionStorage.setItem('tennis_admin_pwd', pwd) } catch {}
+  showPasswordModal.value = false
+  pendingPasswordResolve?.(pwd)
+  pendingPasswordResolve = null
+}
+
+function cancelPasswordModal() {
+  showPasswordModal.value = false
+  pendingPasswordResolve?.('')
+  pendingPasswordResolve = null
+}
+
+const showNotifSettings = ref(false)
+const savingNotif = ref(false)
 const notification = ref<{ message: string; type: 'success' | 'error' } | null>(null)
 let notificationTimer: ReturnType<typeof setTimeout> | null = null
+
+const registrationSourceFilter = ref('')
+const registrationSortBy = ref('')
+const memberSourceFilter = ref('')
+const memberSortBy = ref('')
+const checkingIn = ref(false)
 
 function showNotification(message: string, type: 'success' | 'error' = 'success') {
   if (notificationTimer) clearTimeout(notificationTimer)
@@ -431,6 +608,9 @@ async function fetchSettings() {
     settings.maxTuesday = data.maxTuesday || 10
     settings.maxWednesday = data.maxWednesday || 10
     settings.multiDayEnabled = data.multiDayEnabled || false
+    notificationText.value = data.notificationText || ''
+    savedNotificationText.value = notificationText.value
+    notificationIsSaved.value = true
   } catch {
   }
 }
@@ -523,6 +703,7 @@ async function handleLogin() {
     authenticated.value = true
     try {
       sessionStorage.setItem(AUTH_KEY, '1')
+      sessionStorage.setItem('tennis_admin_pwd', adminPassword.value.trim())
     } catch {
     }
     generateWeeks()
@@ -565,7 +746,10 @@ function generateWeeks() {
 async function fetchRegistrations() {
   loadingRegistrations.value = true
   try {
-    const res = await fetch(`/api/registrations?week=${selectedWeek.value}`)
+    const params = new URLSearchParams({ week: selectedWeek.value })
+    if (registrationSourceFilter.value) params.set('source', registrationSourceFilter.value)
+    if (registrationSortBy.value) params.set('sort', registrationSortBy.value)
+    const res = await fetch(`/api/registrations?${params}`)
     const data = await res.json()
     registrations.value = data.registrations
   } catch {
@@ -577,7 +761,11 @@ async function fetchRegistrations() {
 async function fetchMembers() {
   loadingMembers.value = true
   try {
-    const res = await fetch('/api/members')
+    const params = new URLSearchParams()
+    if (memberSourceFilter.value) params.set('source', memberSourceFilter.value)
+    if (memberSortBy.value) params.set('sort', memberSortBy.value)
+    const qs = params.toString()
+    const res = await fetch(`/api/members${qs ? '?' + qs : ''}`)
     const data = await res.json()
     members.value = data.members
   } catch {
@@ -596,10 +784,18 @@ function generateYears() {
   selectedStatYear.value = current.toString()
 }
 
+function toggleStatSort(field: string) {
+  statSortBy.value = statSortBy.value === field ? '' : field
+  fetchStatistics()
+}
+
 async function fetchStatistics() {
   loadingStatistics.value = true
   try {
-    const res = await fetch(`/api/statistics?year=${selectedStatYear.value}`)
+    const params = new URLSearchParams({ year: selectedStatYear.value })
+    if (statCheckInFilter.value) params.set('checkInType', statCheckInFilter.value)
+    if (statSortBy.value) params.set('sortBy', statSortBy.value)
+    const res = await fetch(`/api/statistics?${params}`)
     const data = await res.json()
     statisticsData.value = data.data
     statisticsTotal.value = data.data.reduce((sum: number, item: any) => sum + item.total_count, 0)
@@ -727,11 +923,98 @@ async function deleteMember(id: number) {
   }
 }
 
+function editMember(m: any) {
+  isEditingMember.value = true
+  editingMemberId.value = m.id
+  memberForm.value = { name: m.name, source: m.source }
+  showMemberModal.value = true
+}
+
+async function saveMember() {
+  const { name, source } = memberForm.value
+  if (!name.trim()) {
+    showNotification('请输入姓名', 'error')
+    return
+  }
+  let pwd = adminPassword.value.trim()
+  if (!pwd) {
+    pwd = await requestPassword()
+  }
+  if (!pwd.trim()) {
+    showNotification('请输入管理口令', 'error')
+    return
+  }
+  savingMember.value = true
+  try {
+    const url = isEditingMember.value ? '/api/members/update' : '/api/members/add'
+    const body: any = { password: pwd.trim(), name: name.trim(), source }
+    if (isEditingMember.value) body.id = editingMemberId.value
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showNotification(isEditingMember.value ? '成员已更新' : '成员已添加')
+      showMemberModal.value = false
+      fetchMembers()
+    } else {
+      showNotification(data.message || '操作失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    savingMember.value = false
+  }
+}
+
+async function doCheckIn(id: number) {
+  if (!confirm('确认该学员已到场签到？')) return
+  checkingIn.value = true
+  try {
+    const res = await fetch('/api/check-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: adminPassword.value.trim(), id }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showNotification('签到成功')
+      fetchRegistrations()
+    } else {
+      showNotification(data.message || '签到失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    checkingIn.value = false
+  }
+}
+
+async function saveNotificationText() {
+  savingNotif.value = true
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'notification_text', value: notificationText.value }),
+    })
+    savedNotificationText.value = notificationText.value
+    notificationIsSaved.value = true
+    showNotification('通知已保存')
+  } catch {
+    showNotification('保存失败', 'error')
+  } finally {
+    savingNotif.value = false
+  }
+}
+
 async function clearRegistrations(scope: 'all' | 'week') {
   const label = scope === 'all' ? '本年' : '本周'
   if (!confirm(`确定清空${label}报名记录吗？此操作不可恢复！`)) return
-  const pwd = prompt('请输入管理口令确认操作')
-  if (!pwd || !pwd.trim()) return
+  const pwd = await requestPassword()
+  if (!pwd.trim()) return
   clearingRegistrations.value = true
   try {
     const res = await fetch('/api/registrations/clear', {
@@ -757,10 +1040,20 @@ function goHome() {
   router.push('/')
 }
 
-onMounted(() => {
+onMounted(async () => {
   try {
     if (sessionStorage.getItem(AUTH_KEY) === '1') {
       authenticated.value = true
+      const savedPwd = sessionStorage.getItem('tennis_admin_pwd')
+      if (savedPwd) {
+        adminPassword.value = savedPwd
+      } else {
+        const pwdInput = await requestPassword('请输入管理口令以继续操作')
+        if (pwdInput && pwdInput.trim()) {
+          adminPassword.value = pwdInput.trim()
+          sessionStorage.setItem('tennis_admin_pwd', pwdInput.trim())
+        }
+      }
     }
   } catch {
   }

@@ -28,6 +28,10 @@
         </p>
       </div>
 
+      <div v-if="notificationText" class="bg-[#FFF8E1] border border-[#FFE082] rounded-xl px-4 py-3 mb-5 text-sm text-[#8D6E00] leading-relaxed whitespace-pre-line">
+        {{ notificationText }}
+      </div>
+
       <div v-if="loading" class="text-center py-12">
         <div class="w-10 h-10 border-4 border-[#2D8A4E] border-t-transparent rounded-full animate-spin mx-auto"></div>
         <p class="text-gray-400 mt-4">加载中...</p>
@@ -232,6 +236,7 @@ const maxTuesday = ref(10)
 const maxWednesday = ref(10)
 const multiDayEnabled = ref(false)
 const beijingTimeStr = ref('')
+const notificationText = ref('')
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let memberAbortController: AbortController | null = null
@@ -387,6 +392,7 @@ async function fetchStatus() {
     maxTuesday.value = data.maxTuesday || 10
     maxWednesday.value = data.maxWednesday || 10
     multiDayEnabled.value = data.multiDayEnabled || false
+    notificationText.value = data.notificationText || ''
 
     if (data.nextOpenTime) {
       updateCountdown()
