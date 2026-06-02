@@ -80,8 +80,9 @@
             <button @click="registrationSortBy = registrationSortBy === 'source' ? '' : 'source'; fetchRegistrations()" :class="['px-3 py-2 rounded-lg border text-sm transition-all', registrationSortBy === 'source' ? 'bg-[#2D8A4E]/10 border-[#2D8A4E] text-[#2D8A4E]' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50']">
               来源排序 {{ registrationSortBy === 'source' ? '↓' : '' }}
             </button>
+            <button @click="showWalkInModal = true" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">临时签到</button>
             <button @click="exportThisWeek" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">导出本周</button>
-            <button @click="exportAll" class="px-3 py-2 rounded-lg bg-[#2D8A4E] text-white text-sm hover:bg-[#237a3f] transition-all">导出全部</button>
+            <button @click="exportAll" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">导出全部</button>
             <div class="ml-auto flex items-center gap-2">
               <span class="text-xs text-gray-400">临时开放报名</span>
               <button
@@ -272,7 +273,7 @@
                         <span class="text-green-600 text-xs">已签到<br>{{ r.checkInTime }}</span>
                       </template>
                       <template v-else>
-                        <span class="text-[#F5A623] text-xs">临时签到<br>{{ r.checkInTime }}</span>
+                        <span class="text-[#F5A623] text-xs">已临时签到<br>{{ r.checkInTime }}</span>
                       </template>
                     </td>
                     <td class="px-5 py-3.5 text-sm whitespace-nowrap">
@@ -287,7 +288,7 @@
 
         <template v-if="activeTab === 'members'">
           <div class="flex items-center gap-2 mb-4">
-            <button @click="isEditingMember = false; editingMemberId = null; memberForm = { name: '', source: 'CNCC' }; showMemberModal = true" class="px-3 py-2 rounded-lg bg-[#2D8A4E] text-white text-sm hover:bg-[#237a3f] transition-all">新增</button>
+            <button @click="isEditingMember = false; editingMemberId = null; memberForm = { name: '', source: 'CNCC' }; showMemberModal = true" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">新增</button>
             <select v-model="memberSourceFilter" @change="fetchMembers" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
               <option value="">全部来源</option>
               <option value="CNCC">CNCC</option>
@@ -302,7 +303,7 @@
               导入成员
               <input type="file" @change="importMembers" accept=".csv" class="hidden" />
             </label>
-            <button @click="exportMembers" class="px-3 py-2 rounded-lg bg-[#2D8A4E] text-white text-sm hover:bg-[#237a3f] transition-all">导出成员</button>
+            <button @click="exportMembers" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">导出成员</button>
           </div>
 
           <div v-if="loadingMembers" class="text-center py-12">
@@ -409,6 +410,55 @@
         </template>
       </div>
     </template>
+
+    <div v-if="showWalkInModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div class="bg-white rounded-2xl p-6 w-80">
+        <h3 class="text-lg font-bold text-gray-700 mb-4">临时签到</h3>
+        <div class="space-y-4">
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">姓名</label>
+            <input
+              v-model="walkInForm.name"
+              type="text"
+              placeholder="请输入姓名"
+              class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-[#2D8A4E] focus:ring-2 focus:ring-[#2D8A4E]/20 outline-none transition-all text-sm"
+            />
+            <p class="text-xs text-gray-400 mt-1">可在成员清单中，也可以不在，不在时自动添加</p>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">来自</label>
+            <select
+              v-model="walkInForm.source"
+              class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-600 outline-none focus:border-[#2D8A4E] focus:bg-white"
+            >
+              <option value="CNCC">CNCC</option>
+              <option value="CFID">CFID</option>
+              <option value="SQQ">SQQ</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">上课日</label>
+            <select
+              v-model="walkInForm.classDay"
+              class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-600 outline-none focus:border-[#2D8A4E] focus:bg-white"
+            >
+              <option value="tuesday">周二</option>
+              <option value="wednesday">周三</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex gap-3 mt-6">
+          <button
+            @click="doWalkIn"
+            :disabled="walkInProcessing"
+            class="flex-1 py-2.5 rounded-xl bg-[#2D8A4E] text-white font-medium text-sm hover:bg-[#237a3f] transition-all disabled:opacity-50"
+          >
+            {{ walkInProcessing ? '处理中…' : '确认签到' }}
+          </button>
+          <button @click="showWalkInModal = false; walkInForm = { name: '', source: 'CNCC', classDay: 'tuesday' }" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showRescheduleModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
       <div class="bg-white rounded-2xl p-6 w-80">
@@ -591,6 +641,9 @@ const registrationSortBy = ref('')
 const memberSourceFilter = ref('')
 const memberSortBy = ref('')
 const checkingIn = ref(false)
+const showWalkInModal = ref(false)
+const walkInForm = ref({ name: '', source: 'CNCC', classDay: 'tuesday' })
+const walkInProcessing = ref(false)
 
 function showNotification(message: string, type: 'success' | 'error' = 'success') {
   if (notificationTimer) clearTimeout(notificationTimer)
@@ -989,6 +1042,68 @@ async function doCheckIn(id: number) {
     showNotification('网络错误', 'error')
   } finally {
     checkingIn.value = false
+  }
+}
+
+async function doWalkIn() {
+  const { name, source, classDay } = walkInForm.value
+  if (!name.trim()) {
+    showNotification('请输入姓名', 'error')
+    return
+  }
+  walkInProcessing.value = true
+  try {
+    const existingMember = members.value.find(m => m.name === name.trim())
+    if (!existingMember) {
+      let pwd = adminPassword.value.trim()
+      if (!pwd) {
+        pwd = await requestPassword()
+      }
+      if (!pwd.trim()) {
+        showNotification('请输入管理口令', 'error')
+        walkInProcessing.value = false
+        return
+      }
+      const addRes = await fetch('/api/members/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd.trim(), name: name.trim(), source }),
+      })
+      const addData = await addRes.json()
+      if (!addData.success) {
+        showNotification(addData.message || '添加成员失败', 'error')
+        walkInProcessing.value = false
+        return
+      }
+    }
+    let pwd = adminPassword.value.trim()
+    if (!pwd) {
+      pwd = await requestPassword()
+    }
+    if (!pwd.trim()) {
+      showNotification('请输入管理口令', 'error')
+      walkInProcessing.value = false
+      return
+    }
+    const res = await fetch('/api/walk-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd.trim(), name: name.trim(), source, classDay }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showNotification('临时签到成功')
+      showWalkInModal.value = false
+      walkInForm.value = { name: '', source: 'CNCC', classDay: 'tuesday' }
+      fetchRegistrations()
+      fetchMembers()
+    } else {
+      showNotification(data.message || '临时签到失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    walkInProcessing.value = false
   }
 }
 
