@@ -138,7 +138,7 @@
         </template>
 
         <div class="bg-white rounded-2xl shadow-sm p-6">
-            <h2 class="text-base font-semibold text-gray-700 mb-4">填写报名信息</h2>
+            <h2 v-if="isOpen" class="text-base font-semibold text-gray-700 mb-4">填写报名信息</h2>
 
             <form @submit.prevent="handleSubmit">
               <div class="mb-4">
