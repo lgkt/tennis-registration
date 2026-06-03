@@ -39,22 +39,21 @@
       </div>
 
       <template v-else>
-        <div v-if="!isOpen" class="bg-white rounded-2xl shadow-sm p-8 text-center">
-          <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+          <div v-if="!isOpen" class="bg-white rounded-2xl shadow-sm p-8 text-center">
+            <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h2 class="text-lg font-semibold text-gray-700 mb-2">{{ forceClose && forceCloseReason ? '报名暂停' : '报名暂未开放' }}</h2>
+            <p v-if="forceClose && forceCloseReason" class="text-gray-500 text-sm">{{ forceCloseReason }}</p>
+            <p v-else class="text-gray-400 text-sm">开放时间：每周一 9:00 ~ 周二 17:00（北京时间）</p>
+            <div v-if="!forceClose && nextOpenTime" class="mt-4 text-sm text-gray-500">
+              距离开放还有
+              <span class="text-[#2D8A4E] font-semibold">{{ countdown }}</span>
+            </div>
           </div>
-          <h2 class="text-lg font-semibold text-gray-700 mb-2">{{ forceClose && forceCloseReason ? '报名暂停' : '报名暂未开放' }}</h2>
-          <p v-if="forceClose && forceCloseReason" class="text-gray-500 text-sm">{{ forceCloseReason }}</p>
-          <p v-else class="text-gray-400 text-sm">开放时间：每周一 9:00 ~ 周二 17:00（北京时间）</p>
-          <div v-if="!forceClose && nextOpenTime" class="mt-4 text-sm text-gray-500">
-            距离开放还有
-            <span class="text-[#2D8A4E] font-semibold">{{ countdown }}</span>
-          </div>
-        </div>
 
-        <template v-else>
           <div class="grid grid-cols-2 gap-3 mb-6">
             <div
               :class="[
@@ -131,11 +130,10 @@
             </div>
           </div>
 
-          <div v-if="closeTime" class="text-center mb-5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-600">
+          <div v-if="isOpen && closeTime" class="text-center mb-5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-600">
             距离报名结束还有
             <span class="font-semibold">{{ closeCountdown }}</span>
           </div>
-        </template>
 
         <div class="bg-white rounded-2xl shadow-sm p-6">
             <h2 v-if="isOpen" class="text-base font-semibold text-gray-700 mb-4">填写报名信息</h2>
