@@ -30,7 +30,7 @@ function initDb() {
       class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
       class_date TEXT,
       source TEXT NOT NULL DEFAULT 'CNCC',
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
       week_key TEXT NOT NULL
     );
 
@@ -69,10 +69,26 @@ function initDb() {
   } catch {
   }
 
+  try {
+    db.exec('ALTER TABLE registrations ADD COLUMN reject_reason TEXT')
+  } catch {
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS class_cancellations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      week_key TEXT NOT NULL,
+      class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(week_key, class_day)
     );
   `)
 }
@@ -86,6 +102,14 @@ export function getSetting(key: string): string | null {
 export function setSetting(key: string, value: string): void {
   const db = getDb()
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value)
+}
+
+export function getBeijingTimeString(): string {
+  const now = new Date()
+  const beijingOffset = 8 * 60
+  const localOffset = now.getTimezoneOffset()
+  const beijingTime = new Date(now.getTime() + (localOffset + beijingOffset) * 60 * 1000)
+  return `${beijingTime.getFullYear()}/${String(beijingTime.getMonth() + 1).padStart(2, '0')}/${String(beijingTime.getDate()).padStart(2, '0')} ${String(beijingTime.getHours()).padStart(2, '0')}:${String(beijingTime.getMinutes()).padStart(2, '0')}`
 }
 
 export function getWeekKey(date: Date = new Date()): string {
@@ -198,5 +222,28 @@ export function getNextOpenTime(): string {
   nextOpen.setHours(9, 0, 0, 0);
 
   const result = new Date(nextOpen.getTime() - (localOffset + beijingOffset) * 60 * 1000);
+  return result.toISOString();
+}
+
+export function getCloseTime(): string {
+  const now = new Date();
+  const beijingOffset = 8 * 60;
+  const localOffset = now.getTimezoneOffset();
+  const beijingTime = new Date(now.getTime() + (localOffset + beijingOffset) * 60 * 1000);
+
+  const day = beijingTime.getDay()
+  let daysUntilTuesday: number
+
+  if (day <= 2) {
+    daysUntilTuesday = 2 - day
+  } else {
+    daysUntilTuesday = 9 - day
+  }
+
+  const closeDate = new Date(beijingTime);
+  closeDate.setDate(closeDate.getDate() + daysUntilTuesday);
+  closeDate.setHours(17, 0, 0, 0);
+
+  const result = new Date(closeDate.getTime() - (localOffset + beijingOffset) * 60 * 1000);
   return result.toISOString();
 }

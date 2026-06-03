@@ -19,6 +19,7 @@
         </div>
         <h1 class="text-2xl font-bold text-[#2D8A4E] tracking-wide">网球课报名</h1>
         <p class="text-gray-500 text-sm mt-1">开放时间：每周一 9:00 ~ 周二 17:00（北京时间）</p>
+        <p v-if="isOpen && forceOpen && forceOpenReason" class="text-green-600 text-xs mt-1">{{ forceOpenReason }}</p>
         <p v-if="weekDates" class="text-gray-400 text-xs mt-2">
           本周为 {{ weekDates.year }}年第{{ weekDates.weekNum }}周（{{ weekDates.monday }}-{{ weekDates.sunday }}）
         </p>
@@ -44,9 +45,10 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
           </div>
-          <h2 class="text-lg font-semibold text-gray-700 mb-2">报名暂未开放</h2>
-          <p class="text-gray-400 text-sm">开放时间：每周一 9:00 ~ 周二 17:00（北京时间）</p>
-          <div v-if="nextOpenTime" class="mt-4 text-sm text-gray-500">
+          <h2 class="text-lg font-semibold text-gray-700 mb-2">{{ forceClose && forceCloseReason ? '报名暂停' : '报名暂未开放' }}</h2>
+          <p v-if="forceClose && forceCloseReason" class="text-gray-500 text-sm">{{ forceCloseReason }}</p>
+          <p v-else class="text-gray-400 text-sm">开放时间：每周一 9:00 ~ 周二 17:00（北京时间）</p>
+          <div v-if="!forceClose && nextOpenTime" class="mt-4 text-sm text-gray-500">
             距离开放还有
             <span class="text-[#2D8A4E] font-semibold">{{ countdown }}</span>
           </div>
@@ -57,61 +59,85 @@
             <div
               :class="[
                 'relative rounded-2xl p-4 text-center',
-                status.tuesday >= maxTuesday
-                  ? 'bg-gray-100 opacity-60'
-                  : 'bg-white shadow-sm'
+                cancellations['tuesday']
+                  ? 'bg-red-50 opacity-80'
+                  : status.tuesday >= maxTuesday
+                    ? 'bg-gray-100 opacity-60'
+                    : 'bg-white shadow-sm'
               ]"
             >
-              <div class="text-xs text-gray-400 mb-1">周二</div>
-              <div class="text-xs text-gray-300 mb-2">{{ weekDates.tuesday }}</div>
-              <div class="text-3xl font-bold" :class="status.tuesday >= maxTuesday ? 'text-gray-400' : 'text-[#2D8A4E]'">
-                {{ status.tuesday }}
+              <div v-if="cancellations['tuesday']" class="absolute inset-0 rounded-2xl flex flex-col items-center justify-center bg-red-50/90 z-10">
+                <div class="text-red-500 font-bold text-sm">周二 {{ weekDates.tuesday }}</div>
+                <div class="text-red-500 font-bold text-sm mb-1">课程取消</div>
+                <div class="text-red-400 text-xs px-2 text-center">{{ cancellations['tuesday'] }}</div>
               </div>
-              <div class="text-xs text-gray-400 mt-1">/ {{ maxTuesday }} 人</div>
-              <div v-if="status.tuesday >= maxTuesday" class="absolute -top-2 -right-2 bg-[#F5A623] text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                已满
-              </div>
-              <div
-                v-else
-                class="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden"
-              >
+              <div :class="cancellations['tuesday'] ? 'opacity-20' : ''">
+                <div class="text-xs text-gray-400 mb-1">周二</div>
+                <div class="text-xs text-gray-300 mb-2">{{ weekDates.tuesday }}</div>
+                <div class="text-3xl font-bold" :class="status.tuesday >= maxTuesday ? 'text-gray-400' : 'text-[#2D8A4E]'">
+                  {{ status.tuesday }}
+                </div>
+                <div class="text-xs text-gray-400 mt-1">/ {{ maxTuesday }} 人</div>
+                <div v-if="status.tuesday >= maxTuesday" class="absolute -top-2 -right-2 bg-[#F5A623] text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                  已满
+                </div>
                 <div
-                  class="h-full bg-[#2D8A4E] rounded-full transition-all duration-500"
-                  :style="{ width: `${(status.tuesday / maxTuesday) * 100}%` }"
-                ></div>
+                  v-else
+                  class="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden"
+                >
+                  <div
+                    class="h-full bg-[#2D8A4E] rounded-full transition-all duration-500"
+                    :style="{ width: `${(status.tuesday / maxTuesday) * 100}%` }"
+                  ></div>
+                </div>
               </div>
             </div>
 
             <div
               :class="[
                 'relative rounded-2xl p-4 text-center',
-                status.wednesday >= maxWednesday
-                  ? 'bg-gray-100 opacity-60'
-                  : 'bg-white shadow-sm'
+                cancellations['wednesday']
+                  ? 'bg-red-50 opacity-80'
+                  : status.wednesday >= maxWednesday
+                    ? 'bg-gray-100 opacity-60'
+                    : 'bg-white shadow-sm'
               ]"
             >
-              <div class="text-xs text-gray-400 mb-1">周三</div>
-              <div class="text-xs text-gray-300 mb-2">{{ weekDates.wednesday }}</div>
-              <div class="text-3xl font-bold" :class="status.wednesday >= maxWednesday ? 'text-gray-400' : 'text-[#2D8A4E]'">
-                {{ status.wednesday }}
+              <div v-if="cancellations['wednesday']" class="absolute inset-0 rounded-2xl flex flex-col items-center justify-center bg-red-50/90 z-10">
+                <div class="text-red-500 font-bold text-sm">周三 {{ weekDates.wednesday }}</div>
+                <div class="text-red-500 font-bold text-sm mb-1">课程取消</div>
+                <div class="text-red-400 text-xs px-2 text-center">{{ cancellations['wednesday'] }}</div>
               </div>
-              <div class="text-xs text-gray-400 mt-1">/ {{ maxWednesday }} 人</div>
-              <div v-if="status.wednesday >= maxWednesday" class="absolute -top-2 -right-2 bg-[#F5A623] text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                已满
-              </div>
-              <div
-                v-else
-                class="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden"
-              >
+              <div :class="cancellations['wednesday'] ? 'opacity-20' : ''">
+                <div class="text-xs text-gray-400 mb-1">周三</div>
+                <div class="text-xs text-gray-300 mb-2">{{ weekDates.wednesday }}</div>
+                <div class="text-3xl font-bold" :class="status.wednesday >= maxWednesday ? 'text-gray-400' : 'text-[#2D8A4E]'">
+                  {{ status.wednesday }}
+                </div>
+                <div class="text-xs text-gray-400 mt-1">/ {{ maxWednesday }} 人</div>
+                <div v-if="status.wednesday >= maxWednesday" class="absolute -top-2 -right-2 bg-[#F5A623] text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                  已满
+                </div>
                 <div
-                  class="h-full bg-[#2D8A4E] rounded-full transition-all duration-500"
-                  :style="{ width: `${(status.wednesday / maxWednesday) * 100}%` }"
-                ></div>
+                  v-else
+                  class="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden"
+                >
+                  <div
+                    class="h-full bg-[#2D8A4E] rounded-full transition-all duration-500"
+                    :style="{ width: `${(status.wednesday / maxWednesday) * 100}%` }"
+                  ></div>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="bg-white rounded-2xl shadow-sm p-6">
+          <div v-if="closeTime" class="text-center mb-5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-600">
+            距离报名结束还有
+            <span class="font-semibold">{{ closeCountdown }}</span>
+          </div>
+        </template>
+
+        <div class="bg-white rounded-2xl shadow-sm p-6">
             <h2 class="text-base font-semibold text-gray-700 mb-4">填写报名信息</h2>
 
             <form @submit.prevent="handleSubmit">
@@ -138,8 +164,11 @@
                   {{ memberStatus.message }}
                 </p>
                 <p v-if="errors.name" class="text-red-400 text-xs mt-1">{{ errors.name }}</p>
+
+
               </div>
 
+              <template v-if="isOpen">
               <div class="mb-6">
                 <label class="block text-sm text-gray-500 mb-1.5">
                   上课日 <span class="text-red-400">*</span>
@@ -148,13 +177,13 @@
                 <div class="grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    :disabled="status.tuesday >= maxTuesday"
+                    :disabled="status.tuesday >= maxTuesday || !!cancellations['tuesday']"
                     @click="toggleDay('tuesday')"
                     :class="[
                       'py-3 px-4 rounded-xl border-2 text-sm font-medium transition-all',
                       form.classDays.includes('tuesday')
                         ? 'border-[#2D8A4E] bg-[#2D8A4E]/5 text-[#2D8A4E]'
-                        : status.tuesday >= maxTuesday
+                        : status.tuesday >= maxTuesday || cancellations['tuesday']
                           ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
                           : 'border-gray-200 bg-white text-gray-600 hover:border-[#2D8A4E]/30'
                     ]"
@@ -166,17 +195,18 @@
                       周二
                     </div>
                     <div class="text-xs mt-0.5 opacity-70">{{ weekDates.tuesday }}</div>
-                    <span v-if="status.tuesday >= maxTuesday" class="block text-xs mt-0.5">名额已满</span>
+                    <span v-if="cancellations['tuesday']" class="block text-xs mt-0.5 text-red-400">课程已取消</span>
+                    <span v-else-if="status.tuesday >= maxTuesday" class="block text-xs mt-0.5">名额已满</span>
                   </button>
                   <button
                     type="button"
-                    :disabled="status.wednesday >= maxWednesday"
+                    :disabled="status.wednesday >= maxWednesday || !!cancellations['wednesday']"
                     @click="toggleDay('wednesday')"
                     :class="[
                       'py-3 px-4 rounded-xl border-2 text-sm font-medium transition-all',
                       form.classDays.includes('wednesday')
                         ? 'border-[#2D8A4E] bg-[#2D8A4E]/5 text-[#2D8A4E]'
-                        : status.wednesday >= maxWednesday
+                        : status.wednesday >= maxWednesday || cancellations['wednesday']
                           ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
                           : 'border-gray-200 bg-white text-gray-600 hover:border-[#2D8A4E]/30'
                     ]"
@@ -188,7 +218,8 @@
                       周三
                     </div>
                     <div class="text-xs mt-0.5 opacity-70">{{ weekDates.wednesday }}</div>
-                    <span v-if="status.wednesday >= maxWednesday" class="block text-xs mt-0.5">名额已满</span>
+                    <span v-if="cancellations['wednesday']" class="block text-xs mt-0.5 text-red-400">课程已取消</span>
+                    <span v-else-if="status.wednesday >= maxWednesday" class="block text-xs mt-0.5">名额已满</span>
                   </button>
                 </div>
                 <p v-if="errors.classDay" class="text-red-400 text-xs mt-1">{{ errors.classDay }}</p>
@@ -210,16 +241,91 @@
                 </span>
                 <span v-else>提交报名</span>
               </button>
+            </template>
             </form>
           </div>
-        </template>
+
+          <div :class="['bg-white rounded-2xl shadow-sm p-6 mt-4 transition-opacity', !memberStatus?.isValid ? 'opacity-40' : '']">
+            <h2 class="text-base font-semibold text-gray-700 mb-4">签到</h2>
+
+            <div v-if="memberStatus?.isValid && checkinResults.length > 0" class="space-y-2 mb-3">
+              <div
+                v-for="result in checkinResults"
+                :key="result.classDay"
+                class="rounded-xl px-4 py-2.5 text-xs"
+                :class="{
+                  'bg-blue-50 border border-blue-200 text-blue-600': result.status === 'applied',
+                  'bg-green-50 border border-green-200 text-green-600': result.status === 'approved' || result.status === 'walkin',
+                  'bg-red-50 border border-red-200 text-red-500': result.status === 'rejected',
+                }"
+              >
+                <template v-if="result.status === 'applied'">
+                  ⏳ {{ result.classDay === 'tuesday' ? '周二' : '周三' }}签到申请已提交，等待审批
+                </template>
+                <template v-else-if="result.status === 'approved'">
+                  ✓ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 签到成功
+                </template>
+                <template v-else-if="result.status === 'rejected'">
+                  ✗ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 签到失败，原因为{{ result.rejectReason }}
+                </template>
+                <template v-else-if="result.status === 'walkin'">
+                  ✓ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 签到成功（临时）
+                </template>
+              </div>
+            </div>
+
+            <div v-if="memberStatus?.isValid && canApplyCheckin">
+              <button
+                @click="openCheckinModal"
+                class="text-sm text-[#2D8A4E] hover:text-[#237a3f] font-medium flex items-center gap-1"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                申请签到
+              </button>
+            </div>
+            <div v-else-if="!memberStatus?.isValid" class="text-xs text-gray-400">
+              请先在上方输入姓名
+            </div>
+            <p v-if="memberStatus?.isValid && checkinResults.length > 0 && !canApplyCheckin" class="text-xs text-gray-400">
+              您本周已申请所有上课日的签到
+            </p>
+          </div>
+
       </template>
+    </div>
+
+    <div v-if="showCheckinModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div class="bg-white rounded-2xl p-6 w-80">
+        <h3 class="text-lg font-bold text-gray-700 mb-4">申请签到</h3>
+        <p class="text-sm text-gray-500 mb-4">请选择需要签到的上课日</p>
+        <div class="mb-4">
+          <select
+            v-model="checkinClassDay"
+            class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-600 outline-none focus:border-[#2D8A4E] focus:bg-white"
+          >
+            <option value="tuesday">周二（{{ weekDates?.tuesday || '' }}）</option>
+            <option value="wednesday">周三（{{ weekDates?.wednesday || '' }}）</option>
+          </select>
+        </div>
+        <div class="flex gap-3">
+          <button
+            @click="doApplyCheckin"
+            :disabled="applyingCheckin"
+            class="flex-1 py-2.5 rounded-xl bg-[#2D8A4E] text-white font-medium text-sm hover:bg-[#237a3f] transition-all disabled:opacity-50"
+          >
+            {{ applyingCheckin ? '提交中…' : '提交申请' }}
+          </button>
+          <button @click="showCheckinModal = false" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -229,6 +335,8 @@ const isOpen = ref(false)
 const nextOpenTime = ref('')
 const submitting = ref(false)
 const countdown = ref('')
+const closeTime = ref('')
+const closeCountdown = ref('')
 const weekDates = ref<any>(null)
 const memberStatus = ref<any>(null)
 const checkingMember = ref(false)
@@ -237,7 +345,28 @@ const maxWednesday = ref(10)
 const multiDayEnabled = ref(false)
 const beijingTimeStr = ref('')
 const notificationText = ref('')
+const forceOpen = ref(false)
+const forceClose = ref(false)
+const forceCloseReason = ref('')
+const forceOpenReason = ref('')
+const cancellations = reactive<Record<string, string>>({})
+const checkinResults = ref<any[]>([])
+const showCheckinModal = ref(false)
+
+function getBeijingDay(): string {
+  const now = new Date()
+  const offset = now.getTimezoneOffset()
+  const beijing = new Date(now.getTime() + (offset + 480) * 60 * 1000)
+  const day = beijing.getDay()
+  if (day === 2) return 'tuesday'
+  if (day === 3) return 'wednesday'
+  return day < 2 ? 'tuesday' : 'wednesday'
+}
+
+const checkinClassDay = ref(getBeijingDay())
+const applyingCheckin = ref(false)
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+let closeCountdownTimer: ReturnType<typeof setInterval> | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let memberAbortController: AbortController | null = null
 let clockTimer: ReturnType<typeof setInterval> | null = null
@@ -264,6 +393,11 @@ const form = reactive({
 const errors = reactive({
   name: '',
   classDay: '',
+})
+
+const canApplyCheckin = computed(() => {
+  const existingDays = checkinResults.value.map(r => r.classDay)
+  return !existingDays.includes('tuesday') || !existingDays.includes('wednesday')
 })
 
 const STORAGE_KEY = 'tennis_last_form'
@@ -326,6 +460,9 @@ async function checkMember() {
         return
       }
       memberStatus.value = await res.json()
+      if (memberStatus.value?.isValid) {
+        fetchCheckinResults()
+      }
     } catch (e: any) {
       if (e.name === 'AbortError') return
       memberStatus.value = { isValid: false, message: '网络错误，请检查网络后重试' }
@@ -334,6 +471,55 @@ async function checkMember() {
       memberAbortController = null
     }
   }, 300)
+}
+
+async function fetchCheckinResults() {
+  const name = form.name.trim()
+  if (!name) {
+    checkinResults.value = []
+    return
+  }
+  try {
+    const res = await fetch('/api/checkin-result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    checkinResults.value = data.results || []
+  } catch {
+    checkinResults.value = []
+  }
+}
+
+function openCheckinModal() {
+  checkinClassDay.value = getBeijingDay()
+  showCheckinModal.value = true
+}
+
+async function doApplyCheckin() {
+  const name = form.name.trim()
+  if (!name) return
+  applyingCheckin.value = true
+  try {
+    const res = await fetch('/api/apply-checkin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, classDay: checkinClassDay.value }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showCheckinModal.value = false
+      fetchCheckinResults()
+    } else {
+      errors.name = data.message || '申请失败'
+    }
+  } catch {
+    errors.name = '网络错误，请稍后重试'
+  } finally {
+    applyingCheckin.value = false
+  }
 }
 
 function validate(): boolean {
@@ -380,6 +566,29 @@ function updateCountdown() {
   countdown.value = parts.join(' ')
 }
 
+function updateCloseCountdown() {
+  if (!closeTime.value) return
+  const now = new Date()
+  const target = new Date(closeTime.value)
+  const diff = target.getTime() - now.getTime()
+
+  if (diff <= 0) {
+    closeCountdown.value = '即将关闭'
+    setTimeout(fetchStatus, 1000)
+    return
+  }
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+  const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+
+  const parts: string[] = []
+  if (days > 0) parts.push(`${days}天`)
+  parts.push(`${String(hours).padStart(2, '0')}时${String(minutes).padStart(2, '0')}分${String(seconds).padStart(2, '0')}秒`)
+  closeCountdown.value = parts.join(' ')
+}
+
 async function fetchStatus() {
   try {
     const res = await fetch('/api/status')
@@ -393,11 +602,26 @@ async function fetchStatus() {
     maxWednesday.value = data.maxWednesday || 10
     multiDayEnabled.value = data.multiDayEnabled || false
     notificationText.value = data.notificationText || ''
+    forceCloseReason.value = data.forceCloseReason || ''
+    forceOpenReason.value = data.forceOpenReason || ''
+    forceOpen.value = data.forceOpen || false
+    forceClose.value = data.forceClose || false
+    closeTime.value = data.closeTime || ''
+    if (data.cancellations) {
+      Object.keys(data.cancellations).forEach(k => {
+        cancellations[k] = data.cancellations[k]
+      })
+    }
 
     if (data.nextOpenTime) {
       updateCountdown()
       if (countdownTimer) clearInterval(countdownTimer)
       countdownTimer = setInterval(updateCountdown, 1000)
+    }
+    if (data.isOpen && data.closeTime) {
+      updateCloseCountdown()
+      if (closeCountdownTimer) clearInterval(closeCountdownTimer)
+      closeCountdownTimer = setInterval(updateCloseCountdown, 1000)
     }
   } catch {
   } finally {
@@ -473,6 +697,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
   if (countdownTimer) clearInterval(countdownTimer)
+  if (closeCountdownTimer) clearInterval(closeCountdownTimer)
   if (debounceTimer) clearTimeout(debounceTimer)
   if (memberAbortController) memberAbortController.abort()
 })

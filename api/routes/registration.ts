@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
-import { getDb, getWeekKey, isRegistrationOpen, getNextOpenTime, getClassDate, getWeekDates, getSetting, setSetting } from '../db.js'
+import { getDb, getWeekKey, isRegistrationOpen, getNextOpenTime, getCloseTime, getClassDate, getWeekDates, getSetting, setSetting, getBeijingTimeString } from '../db.js'
 
 const router = Router()
 
@@ -18,6 +18,9 @@ router.get('/status', (req: Request, res: Response): void => {
   const weekKey = getWeekKey()
   const open = isRegistrationOpen()
   const forceOpen = getSetting('force_open') === 'true'
+  const forceOpenReason = getSetting('force_open_reason') || ''
+  const forceClose = getSetting('force_close') === 'true'
+  const forceCloseReason = getSetting('force_close_reason') || ''
   const maxTuesday = getMaxOrDefault('max_tuesday', 10)
   const maxWednesday = getMaxOrDefault('max_wednesday', 10)
   const multiDayEnabled = getSetting('multi_day_enabled') === 'true'
@@ -32,17 +35,31 @@ router.get('/status', (req: Request, res: Response): void => {
     'SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?'
   ).get(weekKey, 'wednesday') as { count: number }
 
+  const cancellations = db.prepare(
+    'SELECT class_day, reason FROM class_cancellations WHERE week_key = ?'
+  ).all(weekKey) as Array<{ class_day: string; reason: string }>
+
+  const isActuallyOpen = (open || forceOpen) && !forceClose
+
   res.json({
     tuesday: tuesdayCount.count,
     wednesday: wednesdayCount.count,
     maxTuesday,
     maxWednesday,
     multiDayEnabled,
-    isOpen: open || forceOpen,
+    isOpen: isActuallyOpen,
     forceOpen: forceOpen,
-    nextOpenTime: (open || forceOpen) ? null : getNextOpenTime(),
+    forceOpenReason,
+    forceClose,
+    forceCloseReason,
+    nextOpenTime: isActuallyOpen ? null : getNextOpenTime(),
+    closeTime: getCloseTime(),
     weekDates: weekDates,
     notificationText,
+    cancellations: cancellations.reduce((acc: Record<string, string>, c) => {
+      acc[c.class_day] = c.reason
+      return acc
+    }, {}),
   })
 })
 
@@ -140,8 +157,10 @@ router.post('/register', (req: Request, res: Response): void => {
 
   const open = isRegistrationOpen()
   const forceOpen = getSetting('force_open') === 'true'
-  if (!open && !forceOpen) {
-    res.status(403).json({ success: false, message: '报名未开放' })
+  const forceClose = getSetting('force_close') === 'true'
+  if (forceClose || (!open && !forceOpen)) {
+    const reason = getSetting('force_close_reason') || '报名暂未开放'
+    res.status(403).json({ success: false, message: reason })
     return
   }
 
@@ -203,8 +222,8 @@ router.post('/register', (req: Request, res: Response): void => {
     const classDate = getClassDate(day)
 
     db.prepare(
-      'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(name.trim(), '', day, classDate, member.source, weekKey)
+      'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(name.trim(), '', day, classDate, member.source, weekKey, getBeijingTimeString())
 
     results.push({ classDay: day, classDate, success: true })
   }
@@ -248,6 +267,14 @@ router.get('/registrations', (req: Request, res: Response): void => {
   sql += ' ORDER BY '
   if (sort === 'source') {
     sql += 'source, class_day, created_at'
+  } else if (sort === 'class_day') {
+    sql += 'class_day, created_at'
+  } else if (sort === 'class_date') {
+    sql += 'class_date, created_at'
+  } else if (sort === 'created_at') {
+    sql += 'created_at'
+  } else if (sort === 'checkin') {
+    sql += 'check_in_type, created_at'
   } else {
     sql += 'class_day, created_at'
   }
@@ -263,21 +290,123 @@ router.get('/registrations', (req: Request, res: Response): void => {
     week_key: string
     check_in_type: string | null
     check_in_time: string | null
+    reject_reason: string | null
   }>
 
   res.json({
-    registrations: registrations.map(r => ({
-      id: r.id,
-      name: r.name,
-      classDay: r.class_day,
-      classDate: r.class_date,
-      source: r.source,
-      createdAt: r.created_at,
-      weekKey: r.week_key,
-      checkInType: r.check_in_type || null,
-      checkInTime: r.check_in_time || null,
-    })),
+    registrations: registrations.map(r => {
+      let checkInTypeLabel = ''
+      if (r.check_in_type === 'applied') {
+        const hasScheduled = db.prepare(
+          'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
+        ).get(r.week_key, r.name, r.class_day) as { cnt: number }
+        checkInTypeLabel = hasScheduled.cnt > 0 ? '预约签到' : '临时签到'
+      } else if (r.check_in_type === 'walkin') {
+        checkInTypeLabel = '临时签到'
+      } else if (r.check_in_type === 'approved') {
+        checkInTypeLabel = '已签到'
+      } else if (r.check_in_type === 'rejected') {
+        checkInTypeLabel = '已驳回'
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        classDay: r.class_day,
+        classDate: r.class_date,
+        source: r.source,
+        createdAt: r.created_at,
+        weekKey: r.week_key,
+        checkInType: r.check_in_type || null,
+        checkInTime: r.check_in_time || null,
+        rejectReason: r.reject_reason || null,
+        checkInTypeLabel,
+      }
+    }),
   })
+})
+
+router.get('/registrations/export-template', (_req: Request, res: Response): void => {
+  const bom = '\uFEFF'
+  const content = bom + '姓名,手机号,上课日,来源,周次\n张三,13800000000,tuesday,CNCC,2026-W23\n李四,13900000000,wednesday,CFID,2026-W23\n王五,13700000000,tuesday,SQQ,2026-W23\n赵六,13600000000,wednesday,CNCC,2026-W23'
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', 'attachment; filename=registration_template.csv')
+  res.send(content)
+})
+
+router.post('/registrations/import', (req: Request, res: Response): void => {
+  const { password, content } = req.body
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+  if (!content || !content.trim()) {
+    res.status(400).json({ success: false, message: '请提供导入内容' })
+    return
+  }
+
+  const db = getDb()
+  const timeStr = getBeijingTimeString()
+  let success = 0
+  const errors: string[] = []
+
+  const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
+  const header = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim())
+
+  const idxName = header.findIndex(h => h === '姓名' || h === 'name')
+  const idxPhone = header.findIndex(h => h === '手机号' || h === 'phone')
+  const idxDay = header.findIndex(h => h === '上课日' || h === 'class_day' || h === 'classDay')
+  const idxSource = header.findIndex(h => h === '来源' || h === 'source')
+  const idxWeek = header.findIndex(h => h === '周次' || h === 'week_key' || h === 'weekKey' || h === 'week')
+
+  if (idxName < 0 || idxDay < 0) {
+    res.status(400).json({ success: false, message: '缺少必需列：姓名、上课日' })
+    return
+  }
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',').map(c => c.trim().replace(/^\uFEFF/, ''))
+    const name = cols[idxName] || ''
+    const phone = idxPhone >= 0 ? cols[idxPhone] || '' : ''
+    const classDay = cols[idxDay] ? cols[idxDay].toLowerCase() : ''
+    const source = idxSource >= 0 ? cols[idxSource] || '' : ''
+    const weekKey = idxWeek >= 0 ? cols[idxWeek] || getWeekKey() : getWeekKey()
+
+    if (!name) {
+      errors.push(`第${i + 1}行：姓名为空`)
+      continue
+    }
+    if (!['tuesday', 'wednesday'].includes(classDay)) {
+      errors.push(`第${i + 1}行：上课日无效（${cols[idxDay] || '空'}），应为 tuesday 或 wednesday`)
+      continue
+    }
+
+    const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name) as any
+    if (!member) {
+      errors.push(`第${i + 1}行：成员"${name}"不在名单中，跳过`)
+      continue
+    }
+
+    const finalSource = source || member.source
+    const classDate = getClassDate(classDay, weekKey)
+
+    const exists = db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ?').get(weekKey, name, classDay)
+    if (exists) {
+      errors.push(`第${i + 1}行："${name}"${classDay === 'tuesday' ? '周二' : '周三'}已有报名，跳过`)
+      continue
+    }
+
+    try {
+      db.prepare(
+        'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(name, phone, classDay, classDate, finalSource, weekKey, timeStr)
+      success++
+    } catch (e: any) {
+      errors.push(`第${i + 1}行：插入失败 - ${e.message}`)
+    }
+  }
+
+  res.json({ success: true, imported: success, total: lines.length - 1, errors: errors.slice(0, 50) })
 })
 
 router.post('/check-in', (req: Request, res: Response): void => {
@@ -297,11 +426,7 @@ router.post('/check-in', (req: Request, res: Response): void => {
     res.status(404).json({ success: false, message: '报名记录不存在' })
     return
   }
-  const now = new Date()
-  const beijingOffset = 8 * 60
-  const localOffset = now.getTimezoneOffset()
-  const beijingTime = new Date(now.getTime() + (localOffset + beijingOffset) * 60 * 1000)
-  const timeStr = `${beijingTime.getFullYear()}/${String(beijingTime.getMonth() + 1).padStart(2, '0')}/${String(beijingTime.getDate()).padStart(2, '0')} ${String(beijingTime.getHours()).padStart(2, '0')}:${String(beijingTime.getMinutes()).padStart(2, '0')}`
+  const timeStr = getBeijingTimeString()
   db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ? WHERE id = ?').run('scheduled', timeStr, id)
   res.json({ success: true, message: '签到成功', checkInTime: timeStr })
 })
@@ -320,18 +445,132 @@ router.post('/walk-in', (req: Request, res: Response): void => {
   const db = getDb()
   const weekKey = getWeekKey()
   const classDate = getClassDate(classDay, weekKey)
-
-  const now = new Date()
-  const beijingOffset = 8 * 60
-  const localOffset = now.getTimezoneOffset()
-  const beijingTime = new Date(now.getTime() + (localOffset + beijingOffset) * 60 * 1000)
-  const timeStr = `${beijingTime.getFullYear()}/${String(beijingTime.getMonth() + 1).padStart(2, '0')}/${String(beijingTime.getDate()).padStart(2, '0')} ${String(beijingTime.getHours()).padStart(2, '0')}:${String(beijingTime.getMinutes()).padStart(2, '0')}`
+  const timeStr = getBeijingTimeString()
 
   db.prepare(
-    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name.trim(), '', classDay, classDate, source, weekKey, 'walkin', timeStr)
+    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(name.trim(), '', classDay, classDate, source, weekKey, 'walkin', timeStr, timeStr)
 
   res.json({ success: true, message: '临时签到成功', checkInTime: timeStr })
+})
+
+router.post('/apply-checkin', (req: Request, res: Response): void => {
+  const { name, classDay } = req.body
+  if (!name || !name.trim() || !classDay || !['tuesday', 'wednesday'].includes(classDay)) {
+    res.status(400).json({ success: false, message: '参数错误' })
+    return
+  }
+  const db = getDb()
+  const weekKey = getWeekKey()
+
+  const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
+  if (!member) {
+    res.status(403).json({ success: false, message: '您不是网球小组成员，请联系网球小组组长' })
+    return
+  }
+
+  const existing = db.prepare(
+    'SELECT id, check_in_type FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND (check_in_type IS NOT NULL AND check_in_type != ?) LIMIT 1'
+  ).get(weekKey, name.trim(), classDay, 'scheduled') as { id: number; check_in_type: string } | undefined
+
+  if (existing) {
+    if (existing.check_in_type === 'applied') {
+      res.status(400).json({ success: false, message: '您已提交签到申请，请等待审批' })
+      return
+    }
+    if (existing.check_in_type === 'approved') {
+      res.status(400).json({ success: false, message: '您已签到成功，无需重复申请' })
+      return
+    }
+    if (existing.check_in_type === 'rejected') {
+      res.status(400).json({ success: false, message: '您的签到申请已被驳回，请联系管理员' })
+      return
+    }
+  }
+
+  const classDate = getClassDate(classDay, weekKey)
+  const timeStr = getBeijingTimeString()
+
+  db.prepare(
+    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(name.trim(), '', classDay, classDate, member.source, weekKey, 'applied', timeStr, timeStr)
+
+  res.json({ success: true, message: '签到申请已提交，请等待管理员审批' })
+})
+
+router.post('/checkin-result', (req: Request, res: Response): void => {
+  const { name } = req.body
+  if (!name || !name.trim()) {
+    res.status(400).json({ success: false, message: '参数错误' })
+    return
+  }
+  const db = getDb()
+  const weekKey = getWeekKey()
+
+  const records = db.prepare(
+    'SELECT class_day, check_in_type, check_in_time, reject_reason FROM registrations WHERE week_key = ? AND name = ? AND check_in_type IS NOT NULL AND check_in_type IN (?, ?, ?, ?) ORDER BY class_day'
+  ).all(weekKey, name.trim(), 'applied', 'approved', 'rejected', 'walkin') as Array<{
+    class_day: string
+    check_in_type: string
+    check_in_time: string | null
+    reject_reason: string | null
+  }>
+
+  const results = records.map(r => ({
+    classDay: r.class_day,
+    status: r.check_in_type,
+    checkInTime: r.check_in_time || '',
+    rejectReason: r.reject_reason || '',
+  }))
+
+  res.json({ results })
+})
+
+router.post('/checkin-review', (req: Request, res: Response): void => {
+  const { password, registrationId, action, reason } = req.body
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+  if (!registrationId || !action || !['approve', 'reject'].includes(action)) {
+    res.status(400).json({ success: false, message: '参数错误' })
+    return
+  }
+  if (action === 'reject' && (!reason || !reason.trim())) {
+    res.status(400).json({ success: false, message: '请填写驳回原因' })
+    return
+  }
+
+  const db = getDb()
+  const registration = db.prepare('SELECT * FROM registrations WHERE id = ?').get(registrationId) as any
+  if (!registration) {
+    res.status(404).json({ success: false, message: '报名记录不存在' })
+    return
+  }
+  if (registration.check_in_type !== 'applied') {
+    res.status(400).json({ success: false, message: '该记录不在待审批状态' })
+    return
+  }
+
+  const timeStr = getBeijingTimeString()
+
+  if (action === 'approve') {
+    // Check if user has a regular registration for this day
+    const hasScheduled = db.prepare(
+      'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
+    ).get(registration.week_key, registration.name, registration.class_day) as { cnt: number }
+
+    if (hasScheduled.cnt > 0) {
+      db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('approved', timeStr, registrationId)
+    } else {
+      db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('walkin', timeStr, registrationId)
+    }
+    res.json({ success: true, message: '签到审批通过', checkInTime: timeStr })
+  } else {
+    db.prepare('UPDATE registrations SET check_in_type = ?, reject_reason = ? WHERE id = ?').run('rejected', reason.trim(), registrationId)
+    res.json({ success: true, message: '已驳回签到申请' })
+  }
 })
 
 router.post('/reschedule', (req: Request, res: Response): void => {
@@ -372,6 +611,53 @@ router.post('/reschedule', (req: Request, res: Response): void => {
   db.prepare('UPDATE registrations SET class_day = ?, class_date = ? WHERE id = ?').run(newClassDay, newClassDate, id)
 
   res.json({ success: true, message: '调课成功' })
+})
+
+router.post('/class-cancel', (req: Request, res: Response): void => {
+  const { password, classDay, reason } = req.body
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+  if (!classDay || !['tuesday', 'wednesday'].includes(classDay) || !reason || !reason.trim()) {
+    res.status(400).json({ success: false, message: '参数错误' })
+    return
+  }
+  const db = getDb()
+  const weekKey = getWeekKey()
+  db.prepare(
+    'INSERT OR REPLACE INTO class_cancellations (week_key, class_day, reason, created_at) VALUES (?, ?, ?, ?)'
+  ).run(weekKey, classDay, reason.trim(), getBeijingTimeString())
+  res.json({ success: true, message: '课程已取消' })
+})
+
+router.post('/class-cancel/remove', (req: Request, res: Response): void => {
+  const { password, classDay } = req.body
+  const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
+  if (!password || hashPassword(password) !== storedHash) {
+    res.status(403).json({ success: false, message: '口令错误' })
+    return
+  }
+  if (!classDay || !['tuesday', 'wednesday'].includes(classDay)) {
+    res.status(400).json({ success: false, message: '参数错误' })
+    return
+  }
+  const db = getDb()
+  const weekKey = getWeekKey()
+  db.prepare(
+    'DELETE FROM class_cancellations WHERE week_key = ? AND class_day = ?'
+  ).run(weekKey, classDay)
+  res.json({ success: true, message: '课程取消已恢复' })
+})
+
+router.get('/class-cancellations', (req: Request, res: Response): void => {
+  const week = (req.query.week as string) || getWeekKey()
+  const db = getDb()
+  const cancellations = db.prepare(
+    'SELECT class_day, reason, created_at FROM class_cancellations WHERE week_key = ?'
+  ).all(week) as Array<{ class_day: string; reason: string; created_at: string }>
+  res.json({ cancellations })
 })
 
 router.get('/members', (req: Request, res: Response): void => {
@@ -531,6 +817,9 @@ router.post('/export-all', (req: Request, res: Response): void => {
   const checkInMap: Record<string, string> = {
     scheduled: '预约签到',
     walkin: '临时签到',
+    applied: '申请签到',
+    approved: '审批通过',
+    rejected: '审批驳回',
   }
 
   const header = '姓名,来自,上课日,上课日期,报名日期,所属周,签到类型,签到时间'
@@ -572,6 +861,9 @@ router.get('/export', (req: Request, res: Response): void => {
   const checkInMap: Record<string, string> = {
     scheduled: '预约签到',
     walkin: '临时签到',
+    applied: '申请签到',
+    approved: '审批通过',
+    rejected: '审批驳回',
   }
 
   const header = '姓名,来自,上课日,上课日期,报名时间,签到类型,签到时间'
@@ -589,6 +881,8 @@ router.get('/export', (req: Request, res: Response): void => {
 
 router.get('/statistics', (req: Request, res: Response): void => {
   const year = (req.query.year as string) || new Date().getFullYear().toString()
+  const week = (req.query.week as string) || ''
+  const mode = (req.query.mode as string) || 'year'
   const checkInFilter = (req.query.checkInType as string) || ''
   const sortBy = (req.query.sortBy as string) || ''
   const db = getDb()
@@ -598,6 +892,9 @@ router.get('/statistics', (req: Request, res: Response): void => {
   if (sortBy === 'source') orderClause = 'm.source ASC, m.name'
   else if (sortBy === 'tuesday') orderClause = 'tuesday_count DESC, m.name'
   else if (sortBy === 'wednesday') orderClause = 'wednesday_count DESC, m.name'
+
+  const weekCondition = mode === 'week' && week ? 'week_key = ?' : 'week_key LIKE ?'
+  const weekParam = mode === 'week' && week ? week : `${year}%`
 
   const data = db.prepare(`
     SELECT m.name, m.source,
@@ -611,7 +908,7 @@ router.get('/statistics', (req: Request, res: Response): void => {
         SUM(CASE WHEN class_day = 'tuesday' THEN 1 ELSE 0 END) as tuesday_count,
         SUM(CASE WHEN class_day = 'wednesday' THEN 1 ELSE 0 END) as wednesday_count
       FROM registrations
-      WHERE week_key LIKE ?
+      WHERE ${weekCondition}
         AND (
           ? = ''
           OR (check_in_type = ?)
@@ -620,9 +917,9 @@ router.get('/statistics', (req: Request, res: Response): void => {
       GROUP BY name
     ) r ON m.name = r.name
     ORDER BY ${orderClause}
-  `).all(`${year}%`, checkInFilter, checkInFilter, checkInFilter)
+  `).all(weekParam, checkInFilter, checkInFilter, checkInFilter)
 
-  res.json({ year, data })
+  res.json({ mode, year, week: week || '', data })
 })
 
 router.post('/auth-admin', (req: Request, res: Response): void => {
@@ -640,11 +937,14 @@ router.post('/auth-admin', (req: Request, res: Response): void => {
 
 router.get('/settings', (req: Request, res: Response): void => {
   const forceOpen = getSetting('force_open') === 'true'
+  const forceOpenReason = getSetting('force_open_reason') || ''
+  const forceClose = getSetting('force_close') === 'true'
+  const forceCloseReason = getSetting('force_close_reason') || ''
   const maxTuesday = getMaxOrDefault('max_tuesday', 10)
   const maxWednesday = getMaxOrDefault('max_wednesday', 10)
   const multiDayEnabled = getSetting('multi_day_enabled') === 'true'
   const notificationText = getSetting('notification_text') || ''
-  res.json({ forceOpen, maxTuesday, maxWednesday, multiDayEnabled, notificationText })
+  res.json({ forceOpen, forceOpenReason, forceClose, forceCloseReason, maxTuesday, maxWednesday, multiDayEnabled, notificationText })
 })
 
 router.post('/settings', (req: Request, res: Response): void => {

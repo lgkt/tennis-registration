@@ -61,6 +61,10 @@
               <button @click="activeTab = 'registrations'" :class="['px-3 py-1 rounded text-sm', activeTab === 'registrations' ? 'bg-[#2D8A4E] text-white' : 'bg-white text-gray-600 border border-gray-200']">报名管理</button>
               <button @click="activeTab = 'members'" :class="['px-3 py-1 rounded text-sm', activeTab === 'members' ? 'bg-[#2D8A4E] text-white' : 'bg-white text-gray-600 border border-gray-200']">成员管理</button>
               <button @click="activeTab = 'statistics'" :class="['px-3 py-1 rounded text-sm', activeTab === 'statistics' ? 'bg-[#2D8A4E] text-white' : 'bg-white text-gray-600 border border-gray-200']">统计</button>
+              <button @click="activeTab = 'checkin-review'" :class="['px-3 py-1 rounded text-sm relative', activeTab === 'checkin-review' ? 'bg-[#2D8A4E] text-white' : 'bg-white text-gray-600 border border-gray-200']">
+                签到审批
+                <span v-if="pendingCheckinCount > 0" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{{ pendingCheckinCount > 9 ? '9+' : pendingCheckinCount }}</span>
+              </button>
             </div>
           </div>
           <button @click="goHome" class="px-4 py-2 rounded-lg border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">返回首页</button>
@@ -77,14 +81,13 @@
               <option value="CFID">CFID</option>
               <option value="SQQ">SQQ</option>
             </select>
-            <button @click="registrationSortBy = registrationSortBy === 'source' ? '' : 'source'; fetchRegistrations()" :class="['px-3 py-2 rounded-lg border text-sm transition-all', registrationSortBy === 'source' ? 'bg-[#2D8A4E]/10 border-[#2D8A4E] text-[#2D8A4E]' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50']">
-              来源排序 {{ registrationSortBy === 'source' ? '↓' : '' }}
-            </button>
-            <button @click="showWalkInModal = true" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">临时签到</button>
+            <button @click="showImportModal = true" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">导入报名</button>
             <button @click="exportThisWeek" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">导出本周</button>
             <button @click="exportAll" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">导出全部</button>
             <div class="ml-auto flex items-center gap-2">
-              <span class="text-xs text-gray-400">临时开放报名</span>
+              <button @click="openCancelClass" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">取消课程</button>
+              <button @click="showWalkInModal = true" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">临时签到</button>
+              <span class="text-xs text-gray-400">临时开放</span>
               <button
                 @click="toggleForceOpen"
                 :disabled="updatingSetting"
@@ -100,6 +103,40 @@
                   ]"
                 ></span>
               </button>
+              <input
+                v-if="forceOpen"
+                v-model="forceOpenReason"
+                type="text"
+                placeholder="开放原因"
+                class="w-28 px-2 py-1 rounded border border-gray-200 bg-white text-xs text-gray-600 outline-none focus:border-[#2D8A4E]"
+                @blur="saveForceOpenReason"
+                @keyup.enter="saveForceOpenReason"
+              />
+              <span class="text-xs text-gray-400 ml-2">临时关闭</span>
+              <button
+                @click="toggleForceClose"
+                :disabled="updatingSetting"
+                :class="[
+                  'relative w-11 h-6 rounded-full transition-all',
+                  forceClose ? 'bg-red-500' : 'bg-gray-300'
+                ]"
+              >
+                <span
+                  :class="[
+                    'absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-all',
+                    forceClose ? 'translate-x-5' : 'translate-x-0'
+                  ]"
+                ></span>
+              </button>
+              <input
+                v-if="forceClose"
+                v-model="forceCloseReason"
+                type="text"
+                placeholder="关闭原因"
+                class="w-28 px-2 py-1 rounded border border-gray-200 bg-white text-xs text-gray-600 outline-none focus:border-[#2D8A4E]"
+                @blur="saveForceCloseReason"
+                @keyup.enter="saveForceCloseReason"
+              />
             </div>
           </div>
 
@@ -236,17 +273,27 @@
               <p class="text-gray-400 text-sm">本周暂无报名记录</p>
             </div>
 
-            <div v-else class="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <div v-else class="bg-white rounded-2xl shadow-sm overflow-x-auto">
               <table class="w-full">
                 <thead>
                   <tr class="border-b border-gray-100">
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">序号</th>
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">姓名</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">来自</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">上课日</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">上课日期</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">报名时间</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">签到</th>
+                    <th @click="toggleRegSort('source')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="registrationSortBy === 'source' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      来自{{ registrationSortBy === 'source' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleRegSort('class_day')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="registrationSortBy === 'class_day' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      上课日{{ registrationSortBy === 'class_day' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleRegSort('class_date')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="registrationSortBy === 'class_date' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      上课日期{{ registrationSortBy === 'class_date' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleRegSort('created_at')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="registrationSortBy === 'created_at' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      报名时间{{ registrationSortBy === 'created_at' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleRegSort('checkin')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="registrationSortBy === 'checkin' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      签到{{ registrationSortBy === 'checkin' ? '↓' : '' }}
+                    </th>
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">调课</th>
                   </tr>
                 </thead>
@@ -272,8 +319,18 @@
                       <template v-else-if="r.checkInType === 'scheduled'">
                         <span class="text-green-600 text-xs">已签到<br>{{ r.checkInTime }}</span>
                       </template>
-                      <template v-else>
+                      <template v-else-if="r.checkInType === 'walkin'">
                         <span class="text-[#F5A623] text-xs">已临时签到<br>{{ r.checkInTime }}</span>
+                      </template>
+                      <template v-else-if="r.checkInType === 'applied'">
+                        <span class="text-blue-500 text-xs">待审批<br>{{ r.checkInTime }}</span>
+                      </template>
+                      <template v-else-if="r.checkInType === 'approved'">
+                        <span class="text-green-600 text-xs">审批通过<br>{{ r.checkInTime }}</span>
+                      </template>
+                      <template v-else-if="r.checkInType === 'rejected'">
+                        <span class="text-red-500 text-xs">审批驳回<br>{{ r.checkInTime }}</span>
+                        <span v-if="r.rejectReason" class="text-red-400 text-xs block">原因：{{ r.rejectReason }}</span>
                       </template>
                     </td>
                     <td class="px-5 py-3.5 text-sm whitespace-nowrap">
@@ -295,9 +352,6 @@
               <option value="CFID">CFID</option>
               <option value="SQQ">SQQ</option>
             </select>
-            <button @click="memberSortBy = memberSortBy === 'source' ? '' : 'source'; fetchMembers()" :class="['px-3 py-2 rounded-lg border text-sm transition-all', memberSortBy === 'source' ? 'bg-[#2D8A4E]/10 border-[#2D8A4E] text-[#2D8A4E]' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50']">
-              来源排序 {{ memberSortBy === 'source' ? '↓' : '' }}
-            </button>
             <button @click="downloadTemplate" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">下载模板</button>
             <label class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all cursor-pointer">
               导入成员
@@ -325,13 +379,17 @@
               <p class="text-gray-400 text-sm">暂无成员记录，请先导入</p>
             </div>
 
-            <div v-else class="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <div v-else class="bg-white rounded-2xl shadow-sm overflow-x-auto">
               <table class="w-full">
                 <thead>
                   <tr class="border-b border-gray-100">
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">序号</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">姓名</th>
-                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">来自</th>
+                    <th @click="toggleMemberSort('name')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="memberSortBy === 'name' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      姓名{{ memberSortBy === 'name' ? '↓' : '' }}
+                    </th>
+                    <th @click="toggleMemberSort('source')" class="text-left px-5 py-3 text-xs font-medium cursor-pointer select-none hover:text-gray-600 transition-colors" :class="memberSortBy === 'source' ? 'text-[#2D8A4E]' : 'text-gray-400'">
+                      来自{{ memberSortBy === 'source' ? '↓' : '' }}
+                    </th>
                     <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">操作</th>
                   </tr>
                 </thead>
@@ -352,9 +410,16 @@
         </template>
 
         <template v-if="activeTab === 'statistics'">
-          <div class="flex items-center gap-2 mb-4">
-            <select v-model="selectedStatYear" @change="fetchStatistics" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
+          <div class="flex items-center gap-2 mb-4 flex-wrap">
+            <div class="flex rounded-lg border border-gray-200 overflow-hidden">
+              <button @click="statMode = 'year'; fetchStatistics()" :class="['px-3 py-2 text-sm transition-all', statMode === 'year' ? 'bg-[#2D8A4E] text-white' : 'bg-white text-gray-600 hover:bg-gray-50']">按年</button>
+              <button @click="statMode = 'week'; fetchStatistics()" :class="['px-3 py-2 text-sm transition-all', statMode === 'week' ? 'bg-[#2D8A4E] text-white' : 'bg-white text-gray-600 hover:bg-gray-50']">按周</button>
+            </div>
+            <select v-if="statMode === 'year'" v-model="selectedStatYear" @change="fetchStatistics" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
               <option v-for="y in availableYears" :key="y" :value="y">{{ y }} 年</option>
+            </select>
+            <select v-if="statMode === 'week'" v-model="selectedStatWeek" @change="fetchStatistics" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
+              <option v-for="w in availableStatWeeks" :key="w.key" :value="w.key">{{ w.label }}</option>
             </select>
             <select v-model="statCheckInFilter" @change="fetchStatistics" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
               <option value="">全部报名</option>
@@ -370,11 +435,11 @@
 
           <template v-else>
             <div class="bg-white rounded-xl px-5 py-3 shadow-sm mb-4">
-                <div class="text-xs text-gray-400">全年总{{ statCheckInFilter ? (statCheckInFilter === 'booked' ? '预约报名' : statCheckInFilter === 'scheduled' ? '正常签到' : '临时签到') : '报名' }}</div>
+                <div class="text-xs text-gray-400">{{ statMode === 'week' ? '本周' : '全年' }}{{ statCheckInFilter ? (statCheckInFilter === 'booked' ? '预约报名' : statCheckInFilter === 'scheduled' ? '正常签到' : '临时签到') : '报名' }}</div>
                 <div class="text-xl font-bold text-[#2D8A4E]">{{ statisticsTotal }} 人次</div>
               </div>
 
-            <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <div class="bg-white rounded-2xl shadow-sm overflow-x-auto">
               <table class="w-full">
                 <thead>
                   <tr class="border-b border-gray-100">
@@ -399,9 +464,83 @@
                     <td class="px-5 py-3.5 text-sm" :class="index < 3 ? 'font-bold text-[#2D8A4E]' : 'text-gray-400'">{{ index + 1 }}</td>
                     <td class="px-5 py-3.5 text-sm text-gray-700">{{ item.name }}</td>
                     <td class="px-5 py-3.5 text-sm text-gray-500">{{ item.source }}</td>
-                    <td class="px-5 py-3.5 text-sm text-center text-gray-500">{{ item.tuesday_count }}</td>
-                    <td class="px-5 py-3.5 text-sm text-center text-gray-500">{{ item.wednesday_count }}</td>
+                    <td class="px-5 py-3.5 text-sm text-center" :class="item.tuesday_count > 0 ? 'text-gray-500' : 'text-gray-300'">{{ item.tuesday_count }}</td>
+                    <td class="px-5 py-3.5 text-sm text-center" :class="item.wednesday_count > 0 ? 'text-gray-500' : 'text-gray-300'">{{ item.wednesday_count }}</td>
                     <td class="px-5 py-3.5 text-sm text-center font-semibold" :class="item.total_count > 0 ? 'text-[#2D8A4E]' : 'text-gray-300'">{{ item.total_count }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </template>
+
+        <template v-if="activeTab === 'checkin-review'">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="text-sm text-gray-500">待审批签到</span>
+            <button @click="fetchPendingCheckins" :disabled="loadingPending" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-all">
+              {{ loadingPending ? '刷新中…' : '刷新' }}
+            </button>
+          </div>
+
+          <div v-if="loadingPending" class="text-center py-12">
+            <div class="w-8 h-8 border-4 border-[#2D8A4E] border-t-transparent rounded-full animate-spin mx-auto"></div>
+          </div>
+
+          <template v-else>
+            <div v-if="pendingCheckins.length === 0" class="bg-white rounded-2xl shadow-sm p-12 text-center">
+              <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p class="text-gray-400 text-sm">暂无待审批的签到申请</p>
+            </div>
+
+            <div v-else class="bg-white rounded-2xl shadow-sm overflow-x-auto">
+              <table class="w-full">
+                <thead>
+                  <tr class="border-b border-gray-100">
+                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">姓名</th>
+                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">上课日</th>
+                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">类型</th>
+                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">申请时间</th>
+                    <th class="text-left px-5 py-3 text-xs text-gray-400 font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in pendingCheckins" :key="r.id" class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                    <td class="px-5 py-3.5 text-sm text-gray-700">{{ r.name }}</td>
+                    <td class="px-5 py-3.5">
+                      <span :class="[
+                        'inline-block px-2.5 py-1 rounded-full text-xs font-medium',
+                        r.classDay === 'tuesday' ? 'bg-[#2D8A4E]/10 text-[#2D8A4E]' : 'bg-[#F5A623]/10 text-[#F5A623]'
+                      ]">
+                        {{ r.classDay === 'tuesday' ? '周二' : '周三' }}
+                      </span>
+                    </td>
+                    <td class="px-5 py-3.5">
+                      <span :class="[
+                        'inline-block px-2.5 py-1 rounded-full text-xs font-medium',
+                        r.checkInTypeLabel === '预约签到' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-500'
+                      ]">
+                        {{ r.checkInTypeLabel }}
+                      </span>
+                    </td>
+                    <td class="px-5 py-3.5 text-sm text-gray-400">{{ r.checkInTime }}</td>
+                    <td class="px-5 py-3.5 text-sm whitespace-nowrap">
+                      <div class="flex items-center gap-2">
+                        <button
+                          @click="approveCheckin(r.id)"
+                          :disabled="reviewingCheckin"
+                          class="px-3 py-1.5 rounded-lg bg-[#2D8A4E] text-white text-xs hover:bg-[#237a3f] transition-all disabled:opacity-50"
+                        >通过</button>
+                        <button
+                          @click="openRejectModal(r.id)"
+                          :disabled="reviewingCheckin"
+                          class="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs hover:bg-red-600 transition-all disabled:opacity-50"
+                        >驳回</button>
+                      </div>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -411,6 +550,34 @@
       </div>
     </template>
 
+    <div v-if="showImportModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div class="bg-white rounded-2xl p-6 w-[420px] max-h-[80vh] flex flex-col">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-700">导入报名</h3>
+          <a @click="downloadImportTemplate" class="text-xs text-[#2D8A4E] hover:text-[#237a3f] cursor-pointer">下载模板</a>
+        </div>
+        <p class="text-xs text-gray-400 mb-3">将 Excel 文件另存为 CSV（UTF-8编码）后粘贴内容，或直接粘贴 CSV 文本</p>
+        <div class="flex-1 overflow-auto mb-4">
+          <textarea
+            v-model="importContent"
+            rows="10"
+            placeholder="姓名,手机号,上课日,来源,周次&#10;张三,13800000000,tuesday,CNCC,2026-W23&#10;李四,13900000000,wednesday,CFID,2026-W23"
+            class="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-xs text-gray-600 outline-none focus:border-[#2D8A4E] focus:bg-white resize-none font-mono"
+          ></textarea>
+        </div>
+        <div v-if="importResult" class="mb-3 p-3 rounded-xl text-xs" :class="importResult.imported > 0 ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-600'">
+          <div class="font-semibold mb-1">导入完成：成功 {{ importResult.imported }}/{{ importResult.total }}</div>
+          <div v-for="(err, idx) in importResult.errors" :key="idx" class="opacity-80">{{ err }}</div>
+        </div>
+        <div class="flex gap-3">
+          <button @click="doImport" :disabled="importing" class="flex-1 py-2.5 rounded-xl bg-[#2D8A4E] text-white font-medium text-sm hover:bg-[#237a3f] transition-all disabled:opacity-50">
+            {{ importing ? '导入中…' : '确认导入' }}
+          </button>
+          <button @click="closeImportModal" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showWalkInModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
       <div class="bg-white rounded-2xl p-6 w-80">
         <h3 class="text-lg font-bold text-gray-700 mb-4">临时签到</h3>
@@ -419,13 +586,16 @@
             <label class="text-xs text-gray-400 block mb-1">姓名</label>
             <input
               v-model="walkInForm.name"
+              @input="checkWalkInMember"
               type="text"
               placeholder="请输入姓名"
               class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-[#2D8A4E] focus:ring-2 focus:ring-[#2D8A4E]/20 outline-none transition-all text-sm"
             />
-            <p class="text-xs text-gray-400 mt-1">可在成员清单中，也可以不在，不在时自动添加</p>
+            <p class="text-xs mt-1" :class="walkInMemberFound ? 'text-[#2D8A4E]' : 'text-gray-400'">
+              {{ walkInMemberFound ? '小组成员，来源：' + walkInMemberSource : '不在成员清单中，需填写来源' }}
+            </p>
           </div>
-          <div>
+          <div v-if="!walkInMemberFound">
             <label class="text-xs text-gray-400 block mb-1">来自</label>
             <select
               v-model="walkInForm.source"
@@ -455,7 +625,86 @@
           >
             {{ walkInProcessing ? '处理中…' : '确认签到' }}
           </button>
-          <button @click="showWalkInModal = false; walkInForm = { name: '', source: 'CNCC', classDay: 'tuesday' }" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+          <button @click="closeWalkInModal" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showCancelClassModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div class="bg-white rounded-2xl p-6 w-80">
+        <h3 class="text-lg font-bold text-gray-700 mb-4">取消课程</h3>
+        <div class="space-y-3 mb-4">
+          <div
+            v-for="day in ['tuesday', 'wednesday']"
+            :key="day"
+            class="rounded-xl p-4"
+            :class="cancelClassData[day] ? 'bg-red-50 border border-red-200' : 'bg-gray-50 border border-gray-200'"
+          >
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-medium" :class="cancelClassData[day] ? 'text-red-600' : 'text-gray-600'">
+                {{ day === 'tuesday' ? '周二' : '周三' }}
+              </span>
+              <button
+                v-if="!cancelClassData[day]"
+                @click="startCancelClass(day)"
+                class="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs hover:bg-red-600 transition-all"
+              >取消</button>
+              <button
+                v-else
+                @click="removeCancelClass(day)"
+                :disabled="cancellingClass"
+                class="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-500 text-xs hover:bg-gray-50 transition-all disabled:opacity-50"
+              >恢复</button>
+            </div>
+            <div v-if="cancelClassData[day]" class="text-xs text-red-500">
+              原因：{{ cancelClassData[day] }}
+            </div>
+          </div>
+        </div>
+        <button @click="showCancelClassModal = false" class="w-full py-2 rounded-lg border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">关闭</button>
+      </div>
+    </div>
+
+    <div v-if="showCancelReasonModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-[100]">
+      <div class="bg-white rounded-2xl p-6 w-80">
+        <h3 class="text-lg font-bold text-gray-700 mb-4">取消{{ cancelTargetDay === 'tuesday' ? '周二' : '周三' }}课程</h3>
+        <div class="mb-4">
+          <label class="text-xs text-gray-400 block mb-1">取消原因</label>
+          <input
+            v-model="cancelReasonInput"
+            type="text"
+            placeholder="例如：下雨、节假日等"
+            class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-[#2D8A4E] focus:ring-2 focus:ring-[#2D8A4E]/20 outline-none transition-all text-sm"
+            @keyup.enter="confirmCancelClass"
+          />
+        </div>
+        <div class="flex gap-3">
+          <button @click="confirmCancelClass" :disabled="cancellingClass" class="flex-1 py-2.5 rounded-xl bg-red-500 text-white font-medium text-sm hover:bg-red-600 transition-all disabled:opacity-50">
+            {{ cancellingClass ? '处理中…' : '确认取消' }}
+          </button>
+          <button @click="showCancelReasonModal = false" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showRejectModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-[100]">
+      <div class="bg-white rounded-2xl p-6 w-80">
+        <h3 class="text-lg font-bold text-gray-700 mb-4">驳回签到申请</h3>
+        <div class="mb-4">
+          <label class="text-xs text-gray-400 block mb-1">驳回原因</label>
+          <input
+            v-model="rejectReasonInput"
+            type="text"
+            placeholder="请填写驳回原因"
+            class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:border-[#2D8A4E] focus:ring-2 focus:ring-[#2D8A4E]/20 outline-none transition-all text-sm"
+            @keyup.enter="confirmReject"
+          />
+        </div>
+        <div class="flex gap-3">
+          <button @click="confirmReject" :disabled="reviewingCheckin" class="flex-1 py-2.5 rounded-xl bg-red-500 text-white font-medium text-sm hover:bg-red-600 transition-all disabled:opacity-50">
+            {{ reviewingCheckin ? '处理中…' : '确认驳回' }}
+          </button>
+          <button @click="showRejectModal = false" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
         </div>
       </div>
     </div>
@@ -573,7 +822,7 @@ const isEditingMember = ref(false)
 const editingMemberId = ref<number | null>(null)
 const memberForm = ref({ name: '', source: 'CNCC' })
 const savingMember = ref(false)
-const activeTab = ref<'registrations' | 'members' | 'statistics'>('registrations')
+const activeTab = ref<'registrations' | 'members' | 'statistics' | 'checkin-review'>('registrations')
 const registrations = ref<any[]>([])
 const members = ref<any[]>([])
 const availableWeeks = ref<string[]>([])
@@ -584,8 +833,12 @@ const rescheduling = ref(false)
 const tuesdayCount = computed(() => registrations.value.filter(r => r.classDay === 'tuesday').length)
 const wednesdayCount = computed(() => registrations.value.filter(r => r.classDay === 'wednesday').length)
 const totalCount = computed(() => registrations.value.length)
+const pendingCheckinCount = computed(() => registrations.value.filter((r: any) => r.checkInType === 'applied').length)
 
 const forceOpen = ref(false)
+const forceOpenReason = ref('')
+const forceClose = ref(false)
+const forceCloseReason = ref('')
 const updatingSetting = ref(false)
 const showSettings = ref(false)
 const savingCapacity = ref(false)
@@ -642,8 +895,29 @@ const memberSourceFilter = ref('')
 const memberSortBy = ref('')
 const checkingIn = ref(false)
 const showWalkInModal = ref(false)
+const showImportModal = ref(false)
+const importContent = ref('')
+const importResult = ref<any>(null)
+const importing = ref(false)
 const walkInForm = ref({ name: '', source: 'CNCC', classDay: 'tuesday' })
 const walkInProcessing = ref(false)
+const walkInMemberFound = ref(false)
+const walkInMemberSource = ref('')
+const showCancelClassModal = ref(false)
+const showCancelReasonModal = ref(false)
+const cancelTargetDay = ref<'tuesday' | 'wednesday'>('tuesday')
+const cancelReasonInput = ref('')
+const cancellingClass = ref(false)
+const cancelClassData = ref<Record<string, string>>({})
+const pendingCheckins = ref<any[]>([])
+const loadingPending = ref(false)
+const reviewingCheckin = ref(false)
+const showRejectModal = ref(false)
+const rejectTargetId = ref<number | null>(null)
+const rejectReasonInput = ref('')
+const statMode = ref<'year' | 'week'>('year')
+const selectedStatWeek = ref('')
+const availableStatWeeks = ref<{ key: string; label: string }[]>([])
 
 function showNotification(message: string, type: 'success' | 'error' = 'success') {
   if (notificationTimer) clearTimeout(notificationTimer)
@@ -658,6 +932,9 @@ async function fetchSettings() {
     const res = await fetch('/api/settings')
     const data = await res.json()
     forceOpen.value = data.forceOpen
+    forceOpenReason.value = data.forceOpenReason || ''
+    forceClose.value = data.forceClose
+    forceCloseReason.value = data.forceCloseReason || ''
     settings.maxTuesday = data.maxTuesday || 10
     settings.maxWednesday = data.maxWednesday || 10
     settings.multiDayEnabled = data.multiDayEnabled || false
@@ -680,6 +957,14 @@ async function toggleForceOpen() {
     const data = await res.json()
     if (data.success) {
       forceOpen.value = newValue
+      if (!newValue) {
+        forceOpenReason.value = ''
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'force_open_reason', value: '' }),
+        })
+      }
     } else {
       showNotification(data.message || '操作失败', 'error')
     }
@@ -687,6 +972,60 @@ async function toggleForceOpen() {
     showNotification('网络错误', 'error')
   } finally {
     updatingSetting.value = false
+  }
+}
+
+async function saveForceOpenReason() {
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'force_open_reason', value: forceOpenReason.value }),
+  })
+  const data = await res.json()
+  if (data.success) {
+    showNotification('开放原因已保存')
+  }
+}
+
+async function toggleForceClose() {
+  updatingSetting.value = true
+  try {
+    const newValue = !forceClose.value
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'force_close', value: String(newValue) }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      forceClose.value = newValue
+      if (!newValue) {
+        forceCloseReason.value = ''
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'force_close_reason', value: '' }),
+        })
+      }
+    } else {
+      showNotification(data.message || '操作失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    updatingSetting.value = false
+  }
+}
+
+async function saveForceCloseReason() {
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'force_close_reason', value: forceCloseReason.value }),
+  })
+  const data = await res.json()
+  if (data.success) {
+    showNotification('关闭原因已保存')
   }
 }
 
@@ -761,10 +1100,13 @@ async function handleLogin() {
     }
     generateWeeks()
     generateYears()
+    generateStatWeeks()
+    selectedStatWeek.value = getCurrentWeekKey()
     fetchRegistrations()
     fetchMembers()
     fetchStatistics()
     fetchSettings()
+    fetchPendingCheckins()
   } catch {
     loginError.value = '网络错误，请稍后重试'
   } finally {
@@ -837,15 +1179,77 @@ function generateYears() {
   selectedStatYear.value = current.toString()
 }
 
+function generateStatWeeks() {
+  const now = new Date()
+  const offset = now.getTimezoneOffset()
+  const beijing = new Date(now.getTime() + (offset + 480) * 60 * 1000)
+
+  const weeks: { key: string; label: string }[] = []
+  const seen = new Set<string>()
+
+  for (let i = -12; i <= 4; i++) {
+    const d = new Date(beijing)
+    d.setDate(d.getDate() + i * 7)
+
+    const startOfYear = new Date(d.getFullYear(), 0, 1)
+    const days = Math.floor((d.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000))
+    const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7)
+    const key = `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    const dayOfWeek = d.getDay()
+    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+    const monday = new Date(d)
+    monday.setDate(d.getDate() + diff)
+    const sunday = new Date(monday)
+    sunday.setDate(monday.getDate() + 6)
+
+    const fmt = (dt: Date) => `${dt.getMonth() + 1}/${dt.getDate()}`
+    weeks.push({ key, label: `${key}(${fmt(monday)}-${fmt(sunday)})` })
+  }
+
+  weeks.sort((a, b) => b.key.localeCompare(a.key))
+  availableStatWeeks.value = weeks
+}
+
+function getCurrentWeekKey(): string {
+  const now = new Date()
+  const offset = now.getTimezoneOffset()
+  const beijing = new Date(now.getTime() + (offset + 480) * 60 * 1000)
+  const startOfYear = new Date(beijing.getFullYear(), 0, 1)
+  const days = Math.floor((beijing.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000))
+  const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7)
+  return `${beijing.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
 function toggleStatSort(field: string) {
   statSortBy.value = statSortBy.value === field ? '' : field
   fetchStatistics()
 }
 
+function toggleRegSort(field: string) {
+  registrationSortBy.value = registrationSortBy.value === field ? '' : field
+  fetchRegistrations()
+}
+
+function toggleMemberSort(field: string) {
+  memberSortBy.value = memberSortBy.value === field ? '' : field
+  fetchMembers()
+}
+
 async function fetchStatistics() {
   loadingStatistics.value = true
   try {
-    const params = new URLSearchParams({ year: selectedStatYear.value })
+    const params = new URLSearchParams()
+    if (statMode.value === 'week' && selectedStatWeek.value) {
+      params.set('mode', 'week')
+      params.set('week', selectedStatWeek.value)
+    } else {
+      params.set('mode', 'year')
+      params.set('year', selectedStatYear.value)
+    }
     if (statCheckInFilter.value) params.set('checkInType', statCheckInFilter.value)
     if (statSortBy.value) params.set('sortBy', statSortBy.value)
     const res = await fetch(`/api/statistics?${params}`)
@@ -1045,6 +1449,26 @@ async function doCheckIn(id: number) {
   }
 }
 
+function checkWalkInMember() {
+  const name = walkInForm.value.name.trim()
+  if (!name) {
+    walkInMemberFound.value = false
+    walkInMemberSource.value = ''
+    return
+  }
+  const found = members.value.find(m => m.name === name)
+  walkInMemberFound.value = !!found
+  walkInMemberSource.value = found ? found.source : ''
+  if (found) walkInForm.value.source = found.source
+}
+
+function closeWalkInModal() {
+  showWalkInModal.value = false
+  walkInForm.value = { name: '', source: 'CNCC', classDay: 'tuesday' }
+  walkInMemberFound.value = false
+  walkInMemberSource.value = ''
+}
+
 async function doWalkIn() {
   const { name, source, classDay } = walkInForm.value
   if (!name.trim()) {
@@ -1104,6 +1528,209 @@ async function doWalkIn() {
     showNotification('网络错误', 'error')
   } finally {
     walkInProcessing.value = false
+  }
+}
+
+async function openCancelClass() {
+  const res = await fetch('/api/status')
+  const data = await res.json()
+  cancelClassData.value = data.cancellations || {}
+  showCancelClassModal.value = true
+}
+
+function startCancelClass(day: string) {
+  cancelTargetDay.value = day as 'tuesday' | 'wednesday'
+  cancelReasonInput.value = ''
+  showCancelReasonModal.value = true
+}
+
+async function confirmCancelClass() {
+  if (!cancelReasonInput.value.trim()) {
+    showNotification('请输入取消原因', 'error')
+    return
+  }
+  let pwd = adminPassword.value.trim()
+  if (!pwd) {
+    pwd = await requestPassword()
+  }
+  if (!pwd.trim()) {
+    showNotification('请输入管理口令', 'error')
+    return
+  }
+  cancellingClass.value = true
+  try {
+    const res = await fetch('/api/class-cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd.trim(), classDay: cancelTargetDay.value, reason: cancelReasonInput.value.trim() }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showNotification('课程已取消')
+      showCancelReasonModal.value = false
+      cancelClassData.value[cancelTargetDay.value] = cancelReasonInput.value.trim()
+    } else {
+      showNotification(data.message || '操作失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    cancellingClass.value = false
+  }
+}
+
+async function removeCancelClass(day: string) {
+  let pwd = adminPassword.value.trim()
+  if (!pwd) {
+    pwd = await requestPassword()
+  }
+  if (!pwd.trim()) {
+    showNotification('请输入管理口令', 'error')
+    return
+  }
+  cancellingClass.value = true
+  try {
+    const res = await fetch('/api/class-cancel/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd.trim(), classDay: day }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showNotification('课程已恢复')
+      cancelClassData.value[day] = ''
+    } else {
+      showNotification(data.message || '操作失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    cancellingClass.value = false
+  }
+}
+
+async function fetchPendingCheckins() {
+  loadingPending.value = true
+  try {
+    const res = await fetch(`/api/registrations?week=${selectedWeek.value}`)
+    const data = await res.json()
+    pendingCheckins.value = (data.registrations || []).filter((r: any) => r.checkInType === 'applied')
+  } catch {
+    showNotification('获取待审批列表失败', 'error')
+  } finally {
+    loadingPending.value = false
+  }
+}
+
+async function approveCheckin(id: number) {
+  let pwd = adminPassword.value.trim()
+  if (!pwd) {
+    pwd = await requestPassword()
+  }
+  if (!pwd.trim()) return
+  reviewingCheckin.value = true
+  try {
+    const res = await fetch('/api/checkin-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd.trim(), registrationId: id, action: 'approve' }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showNotification('签到审批通过')
+      fetchPendingCheckins()
+      fetchRegistrations()
+    } else {
+      showNotification(data.message || '操作失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    reviewingCheckin.value = false
+  }
+}
+
+function openRejectModal(id: number) {
+  rejectTargetId.value = id
+  rejectReasonInput.value = ''
+  showRejectModal.value = true
+}
+
+async function confirmReject() {
+  if (!rejectReasonInput.value.trim()) {
+    showNotification('请填写驳回原因', 'error')
+    return
+  }
+  let pwd = adminPassword.value.trim()
+  if (!pwd) {
+    pwd = await requestPassword()
+  }
+  if (!pwd.trim()) return
+  reviewingCheckin.value = true
+  try {
+    const res = await fetch('/api/checkin-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd.trim(), registrationId: rejectTargetId.value, action: 'reject', reason: rejectReasonInput.value.trim() }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showNotification('已驳回签到申请')
+      showRejectModal.value = false
+      fetchPendingCheckins()
+      fetchRegistrations()
+    } else {
+      showNotification(data.message || '操作失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    reviewingCheckin.value = false
+  }
+}
+
+function closeImportModal() {
+  showImportModal.value = false
+  importContent.value = ''
+  importResult.value = null
+}
+
+function downloadImportTemplate() {
+  window.open('/api/registrations/export-template', '_blank')
+}
+
+async function doImport() {
+  if (!importContent.value.trim()) {
+    showNotification('请粘贴导入内容', 'error')
+    return
+  }
+  let pwd = adminPassword.value.trim()
+  if (!pwd) {
+    pwd = await requestPassword()
+  }
+  if (!pwd.trim()) return
+  importing.value = true
+  importResult.value = null
+  try {
+    const res = await fetch('/api/registrations/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd.trim(), content: importContent.value.trim() }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      importResult.value = data
+      if (data.imported > 0) {
+        showNotification(`成功导入 ${data.imported} 条报名记录`)
+        fetchRegistrations()
+      }
+    } else {
+      showNotification(data.message || '导入失败', 'error')
+    }
+  } catch {
+    showNotification('网络错误', 'error')
+  } finally {
+    importing.value = false
   }
 }
 
@@ -1175,6 +1802,8 @@ onMounted(async () => {
   if (authenticated.value) {
     generateWeeks()
     generateYears()
+    generateStatWeeks()
+    selectedStatWeek.value = getCurrentWeekKey()
     fetchRegistrations()
     fetchMembers()
     fetchStatistics()
@@ -1186,6 +1815,7 @@ onMounted(() => {
   const interval = setInterval(() => {
     if (activeTab.value === 'registrations') fetchRegistrations()
     if (activeTab.value === 'members') fetchMembers()
+    if (activeTab.value === 'checkin-review') fetchPendingCheckins()
   }, 30000)
 })
 
@@ -1194,6 +1824,8 @@ watch(activeTab, (tab) => {
     fetchRegistrations()
   } else if (tab === 'members') {
     fetchMembers()
+  } else if (tab === 'checkin-review') {
+    fetchPendingCheckins()
   } else {
     fetchStatistics()
   }
