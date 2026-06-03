@@ -376,8 +376,10 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
       errors.push(`第${i + 1}行：姓名为空`)
       continue
     }
-    if (!['tuesday', 'wednesday'].includes(classDay)) {
-      errors.push(`第${i + 1}行：上课日无效（${cols[idxDay] || '空'}），应为 tuesday 或 wednesday`)
+    const dayMap: Record<string, string> = { '周二': 'tuesday', '周三': 'wednesday', 'tuesday': 'tuesday', 'wednesday': 'wednesday' }
+    const mappedDay = dayMap[classDay]
+    if (!mappedDay) {
+      errors.push(`第${i + 1}行：上课日无效（${cols[idxDay] || '空'}），应为 周二/周三 或 tuesday/wednesday`)
       continue
     }
 
@@ -388,18 +390,18 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
     }
 
     const finalSource = source || member.source
-    const classDate = getClassDate(classDay, weekKey)
+    const classDate = getClassDate(mappedDay, weekKey)
 
-    const exists = db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ?').get(weekKey, name, classDay)
+    const exists = db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ?').get(weekKey, name, mappedDay)
     if (exists) {
-      errors.push(`第${i + 1}行："${name}"${classDay === 'tuesday' ? '周二' : '周三'}已有报名，跳过`)
+      errors.push(`第${i + 1}行："${name}"${mappedDay === 'tuesday' ? '周二' : '周三'}已有报名，跳过`)
       continue
     }
 
     try {
       db.prepare(
         'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).run(name, phone, classDay, classDate, finalSource, weekKey, timeStr)
+      ).run(name, phone, mappedDay, classDate, finalSource, weekKey, timeStr)
       success++
     } catch (e: any) {
       errors.push(`第${i + 1}行：插入失败 - ${e.message}`)

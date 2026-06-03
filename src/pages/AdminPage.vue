@@ -556,12 +556,19 @@
           <h3 class="text-lg font-bold text-gray-700">导入报名</h3>
           <a @click="downloadImportTemplate" class="text-xs text-[#2D8A4E] hover:text-[#237a3f] cursor-pointer">下载模板</a>
         </div>
-        <p class="text-xs text-gray-400 mb-3">将 Excel 文件另存为 CSV（UTF-8编码）后粘贴内容，或直接粘贴 CSV 文本</p>
+        <p class="text-xs text-gray-400 mb-3">选择 CSV 文件自动填充，或直接粘贴 CSV 文本</p>
+        <div class="flex gap-2 mb-3">
+          <label class="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-500 hover:bg-gray-100 hover:border-[#2D8A4E] cursor-pointer transition-all">
+            <span>📁</span>
+            <span>选择 CSV 文件</span>
+            <input type="file" accept=".csv" @change="handleImportFile" class="hidden" />
+          </label>
+        </div>
         <div class="flex-1 overflow-auto mb-4">
           <textarea
             v-model="importContent"
             rows="10"
-            placeholder="姓名,手机号,上课日,来源,周次&#10;张三,13800000000,tuesday,CNCC,2026-W23&#10;李四,13900000000,wednesday,CFID,2026-W23"
+            placeholder="姓名,手机号,上课日,来源,周次&#10;张三,13800000000,周二,CNCC,2026-W23&#10;李四,13900000000,周三,CFID,2026-W23"
             class="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-xs text-gray-600 outline-none focus:border-[#2D8A4E] focus:bg-white resize-none font-mono"
           ></textarea>
         </div>
@@ -1699,6 +1706,23 @@ function downloadImportTemplate() {
   window.open('/api/registrations/export-template', '_blank')
 }
 
+function handleImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    importContent.value = reader.result as string
+    showNotification(`已读取文件：${file.name}（${file.size} 字节）`)
+  }
+  reader.onerror = () => {
+    showNotification('文件读取失败', 'error')
+  }
+  reader.readAsText(file, 'UTF-8')
+  // 允许重复选择同一文件
+  input.value = ''
+}
+
 async function doImport() {
   if (!importContent.value.trim()) {
     showNotification('请粘贴导入内容', 'error')
@@ -1723,6 +1747,9 @@ async function doImport() {
       if (data.imported > 0) {
         showNotification(`成功导入 ${data.imported} 条报名记录`)
         fetchRegistrations()
+        if (data.errors.length === 0) {
+          closeImportModal()
+        }
       }
     } else {
       showNotification(data.message || '导入失败', 'error')
