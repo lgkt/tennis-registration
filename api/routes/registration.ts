@@ -81,7 +81,7 @@ router.get('/check-member', (req: Request, res: Response): void => {
 
     res.json({
       isValid: true,
-      message: '您是网球小组成员，请继续报名',
+      message: '您是网球小组成员，请继续报名或签到',
       source: member.source,
       existingRegistrations: existingDays.map(r => ({ classDay: r.class_day })),
     })
@@ -113,7 +113,7 @@ router.post('/check-member', (req: Request, res: Response): void => {
 
     res.json({
       isValid: true,
-      message: '您是网球小组成员，请继续报名',
+      message: '您是网球小组成员，请继续报名或签到',
       source: member.source,
       existingRegistrations: existingDays.map(r => ({ classDay: r.class_day })),
     })
