@@ -63,6 +63,14 @@ router.get('/status', (req: Request, res: Response): void => {
   })
 })
 
+router.get('/weeks', (req: Request, res: Response): void => {
+  const db = getDb()
+  const weeks = db.prepare(
+    "SELECT DISTINCT week_key FROM registrations ORDER BY week_key"
+  ).all() as Array<{ week_key: string }>
+  res.json({ weeks: weeks.map(w => w.week_key) })
+})
+
 router.get('/check-member', (req: Request, res: Response): void => {
   try {
     const name = (req.query.name as string || '').trim()
@@ -354,14 +362,22 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
   const header = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim())
 
   const idxName = header.findIndex(h => h === '姓名' || h === 'name')
-  const idxPhone = header.findIndex(h => h === '手机号' || h === 'phone')
+  const idxPhone = header.findIndex(h => h === '手机号' || h === '手机号码' || h === 'phone')
   const idxDay = header.findIndex(h => h === '上课日' || h === 'class_day' || h === 'classDay')
-  const idxSource = header.findIndex(h => h === '来源' || h === 'source')
-  const idxWeek = header.findIndex(h => h === '周次' || h === 'week_key' || h === 'weekKey' || h === 'week')
+  const idxSource = header.findIndex(h => h === '来源' || h === 'source' || h === '来自')
+  const idxWeek = header.findIndex(h => h === '周次' || h === 'week_key' || h === 'weekKey' || h === 'week' || h === '所属周')
+  const idxCheckinType = header.findIndex(h => h === '签到类型' || h === 'check_in_type')
+  const idxCheckinTime = header.findIndex(h => h === '签到时间' || h === 'check_in_time')
+  const idxCreatedAt = header.findIndex(h => h === '报名日期' || h === 'created_at')
 
   if (idxName < 0 || idxDay < 0) {
     res.status(400).json({ success: false, message: '缺少必需列：姓名、上课日' })
     return
+  }
+
+  const checkInMapRev: Record<string, string> = {
+    '预约签到': 'scheduled', '临时签到': 'walkin', '申请签到': 'applied',
+    '审批通过': 'approved', '审批驳回': 'rejected',
   }
 
   for (let i = 1; i < lines.length; i++) {
@@ -371,6 +387,9 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
     const classDay = cols[idxDay] ? cols[idxDay].toLowerCase() : ''
     const source = idxSource >= 0 ? cols[idxSource] || '' : ''
     const weekKey = idxWeek >= 0 ? cols[idxWeek] || getWeekKey() : getWeekKey()
+    const checkInType = idxCheckinType >= 0 && cols[idxCheckinType] ? (checkInMapRev[cols[idxCheckinType]] || cols[idxCheckinType]) : ''
+    const checkInTime = idxCheckinTime >= 0 && cols[idxCheckinTime] ? cols[idxCheckinTime] : ''
+    const createdAt = idxCreatedAt >= 0 && cols[idxCreatedAt] ? cols[idxCreatedAt] : timeStr
 
     if (!name) {
       errors.push(`第${i + 1}行：姓名为空`)
@@ -394,14 +413,18 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
 
     const exists = db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ?').get(weekKey, name, mappedDay)
     if (exists) {
-      errors.push(`第${i + 1}行："${name}"${mappedDay === 'tuesday' ? '周二' : '周三'}已有报名，跳过`)
-      continue
+      db.prepare('DELETE FROM registrations WHERE id = ?').run((exists as any).id)
+      errors.push(`第${i + 1}行："${name}"${mappedDay === 'tuesday' ? '周二' : '周三'}原有记录已覆盖`)
     }
 
     try {
-      db.prepare(
-        'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).run(name, phone, mappedDay, classDate, finalSource, weekKey, timeStr)
+      const sql = checkInType
+        ? 'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        : 'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      const params = checkInType
+        ? [name, phone, mappedDay, classDate, finalSource, weekKey, createdAt, checkInType, checkInTime]
+        : [name, phone, mappedDay, classDate, finalSource, weekKey, createdAt]
+      db.prepare(sql).run(...params)
       success++
     } catch (e: any) {
       errors.push(`第${i + 1}行：插入失败 - ${e.message}`)
@@ -472,8 +495,8 @@ router.post('/apply-checkin', (req: Request, res: Response): void => {
   }
 
   const existing = db.prepare(
-    'SELECT id, check_in_type FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND (check_in_type IS NOT NULL AND check_in_type != ?) LIMIT 1'
-  ).get(weekKey, name.trim(), classDay, 'scheduled') as { id: number; check_in_type: string } | undefined
+    'SELECT id, check_in_type FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? ORDER BY id DESC LIMIT 1'
+  ).get(weekKey, name.trim(), classDay) as { id: number; check_in_type: string | null } | undefined
 
   if (existing) {
     if (existing.check_in_type === 'applied') {
@@ -488,6 +511,12 @@ router.post('/apply-checkin', (req: Request, res: Response): void => {
       res.status(400).json({ success: false, message: '您的签到申请已被驳回，请联系管理员' })
       return
     }
+    // 已有报名记录（check_in_type IS NULL），更新签到信息
+    const timeStr = getBeijingTimeString()
+    db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ? WHERE id = ?')
+      .run('applied', timeStr, existing.id)
+    res.json({ success: true, message: '签到申请已提交，请等待管理员审批' })
+    return
   }
 
   const classDate = getClassDate(classDay, weekKey)

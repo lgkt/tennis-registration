@@ -6,8 +6,8 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const dataDir = path.join(__dirname, '..', 'data')
-const dbPath = path.join(dataDir, 'registrations.db')
+const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', 'data')
+const dbPath = process.env.DB_PATH || path.join(dataDir, 'registrations.db')
 
 let db: Database.Database
 
@@ -91,6 +91,12 @@ function initDb() {
       UNIQUE(week_key, class_day)
     );
   `)
+
+  // Default settings
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
+    .run('notification_text', '1.本年网球课报名仅限预约制，不欢迎临时上课。\n2.一般来说，每周一9:00-周二17:00开放报名当周课程，可选周二和周三，为了保证自由度，可多选，为了保证上课质量，每天都名额限制，所以为了让更多人参与，大家尽量单选。\n3.预约后，请在上课时找小组长签到，也可以在主页面最下方发起签到申请。\n4.天气有变，可能会取消课程，请提前关注天气预报。')
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
+    .run('multi_day_enabled', 'true')
 }
 
 export function getSetting(key: string): string | null {

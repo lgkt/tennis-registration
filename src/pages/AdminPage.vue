@@ -73,7 +73,7 @@
         <template v-if="activeTab === 'registrations'">
           <div class="flex items-center gap-2 mb-4 flex-wrap">
             <select v-model="selectedWeek" @change="fetchRegistrations" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
-              <option v-for="w in availableWeeks" :key="w" :value="w">{{ w }}</option>
+              <option v-for="w in availableWeeks" :key="w" :value="w">{{ formatWeekLabel(w) }}</option>
             </select>
             <select v-model="registrationSourceFilter" @change="fetchRegistrations" class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 outline-none focus:border-[#2D8A4E]">
               <option value="">全部来源</option>
@@ -574,7 +574,9 @@
         </div>
         <div v-if="importResult" class="mb-3 p-3 rounded-xl text-xs" :class="importResult.imported > 0 ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-600'">
           <div class="font-semibold mb-1">导入完成：成功 {{ importResult.imported }}/{{ importResult.total }}</div>
-          <div v-for="(err, idx) in importResult.errors" :key="idx" class="opacity-80">{{ err }}</div>
+          <div class="max-h-40 overflow-y-auto space-y-0.5">
+            <div v-for="(err, idx) in importResult.errors" :key="idx" class="opacity-80">{{ err }}</div>
+          </div>
         </div>
         <div class="flex gap-3">
           <button @click="doImport" :disabled="importing" class="flex-1 py-2.5 rounded-xl bg-[#2D8A4E] text-white font-medium text-sm hover:bg-[#237a3f] transition-all disabled:opacity-50">
@@ -1105,7 +1107,7 @@ async function handleLogin() {
       sessionStorage.setItem('tennis_admin_pwd', adminPassword.value.trim())
     } catch {
     }
-    generateWeeks()
+    fetchWeeks()
     generateYears()
     generateStatWeeks()
     selectedStatWeek.value = getCurrentWeekKey()
@@ -1121,28 +1123,22 @@ async function handleLogin() {
   }
 }
 
-function generateWeeks() {
-  const weeks: string[] = []
-  const now = new Date()
-  const startOfYear = new Date(now.getFullYear(), 0, 1)
-  const days = Math.floor((now.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000))
-  let currentWeekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7)
-  let currentYear = now.getFullYear()
-
-  for (let i = 3; i >= 0; i--) {
-    let weekNum = currentWeekNum - i
-    let year = currentYear
-    if (weekNum < 1) {
-      year--
-      const endOfPrevYear = new Date(year, 11, 31)
-      const startOfPrevYear = new Date(year, 0, 1)
-      const daysInYear = Math.floor((endOfPrevYear.getTime() - startOfPrevYear.getTime()) / (24 * 60 * 60 * 1000))
-      weekNum = Math.ceil((daysInYear + startOfPrevYear.getDay() + 1) / 7) + weekNum
-    }
-    weeks.push(`${year}-W${String(weekNum).padStart(2, '0')}`)
+async function fetchWeeks() {
+  try {
+    const res = await fetch('/api/weeks')
+    const data = await res.json()
+    const weeks = data.weeks || []
+    // 始终包含当前周
+    const currentWeek = getCurrentWeekKey()
+    const allWeeks = [...new Set([...weeks, currentWeek])].sort()
+    availableWeeks.value = allWeeks
+    // 默认选中当前周
+    const idx = allWeeks.indexOf(currentWeek)
+    selectedWeek.value = allWeeks[Math.max(0, idx)]
+  } catch {
+    availableWeeks.value = [getCurrentWeekKey()]
+    selectedWeek.value = getCurrentWeekKey()
   }
-  availableWeeks.value = weeks
-  selectedWeek.value = weeks[3]
 }
 
 async function fetchRegistrations() {
@@ -1229,6 +1225,20 @@ function getCurrentWeekKey(): string {
   const days = Math.floor((beijing.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000))
   const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7)
   return `${beijing.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+function formatWeekLabel(weekKey: string): string {
+  const [yearStr, weekStr] = weekKey.split('-W')
+  const year = parseInt(yearStr, 10)
+  const weekNum = parseInt(weekStr, 10)
+  const startOfYear = new Date(year, 0, 1)
+  const daysToMonday = startOfYear.getDay() === 1 ? 0 : startOfYear.getDay() === 0 ? -6 : 1 - startOfYear.getDay()
+  const firstMonday = new Date(startOfYear)
+  firstMonday.setDate(startOfYear.getDate() + daysToMonday + (weekNum - 1) * 7)
+  const sunday = new Date(firstMonday)
+  sunday.setDate(firstMonday.getDate() + 6)
+  const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`
+  return `${weekKey}（${fmt(firstMonday)}-${fmt(sunday)}）`
 }
 
 function toggleStatSort(field: string) {
@@ -1827,7 +1837,7 @@ onMounted(async () => {
   } catch {
   }
   if (authenticated.value) {
-    generateWeeks()
+    fetchWeeks()
     generateYears()
     generateStatWeeks()
     selectedStatWeek.value = getCurrentWeekKey()
