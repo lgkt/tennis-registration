@@ -26,7 +26,8 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     await waitDbReady()
     next()
   } catch (err) {
-    res.status(500).json({ success: false, error: 'Database initialization failed' })
+    console.error('Database initialization error:', err)
+    res.status(500).json({ success: false, error: 'Database initialization failed', details: err instanceof Error ? err.message : String(err) })
   }
 })
 
