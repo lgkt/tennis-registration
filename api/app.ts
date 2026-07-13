@@ -48,11 +48,21 @@ app.use('/api', registrationRoutes)
 
 app.use(
   '/api/health',
-  (req: Request, res: Response): void => {
-    res.status(200).json({
-      success: true,
-      message: 'ok',
-    })
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      await waitDbReady()
+      res.status(200).json({
+        success: true,
+        message: 'ok',
+        database: 'connected',
+      })
+    } catch (err) {
+      res.status(503).json({
+        success: false,
+        message: 'database not ready',
+        database: 'disconnected',
+      })
+    }
   },
 )
 
