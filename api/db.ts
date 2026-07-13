@@ -207,10 +207,32 @@ function isPostgres(): boolean {
   return !!databaseUrl
 }
 
+async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries: number = 10, delay: number = 1000): Promise<T> {
+  let lastError: Error | undefined
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      if (lastError.message.includes('the database system is starting up')) {
+        console.log(`Database still starting up, retry ${i + 1}/${maxRetries}...`)
+        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)))
+      } else {
+        throw lastError
+      }
+    }
+  }
+  throw lastError || new Error('Database initialization failed after retries')
+}
+
 async function initDb() {
   const db = getDb()
-
+  
   if (isPostgres()) {
+    await retryWithBackoff(async () => {
+      await db.exec('SELECT 1')
+    })
+
     await db.exec(`
       CREATE TABLE IF NOT EXISTS registrations (
         id SERIAL PRIMARY KEY,
