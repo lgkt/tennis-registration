@@ -166,7 +166,10 @@ class PgDb implements Db {
   pool: pg.Pool
 
   constructor(connectionString: string) {
-    this.pool = new pg.Pool({ connectionString })
+    this.pool = new pg.Pool({ 
+      connectionString,
+      ssl: { rejectUnauthorized: false }
+    })
   }
 
   prepare(sql: string): Statement {
