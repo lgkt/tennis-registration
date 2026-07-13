@@ -8,34 +8,34 @@ function hashPassword(password: string): string {
   return crypto.createHash('sha256').update(password).digest('hex')
 }
 
-function getMaxOrDefault(key: string, defaultVal: number): number {
-  const val = getSetting(key)
+async function getMaxOrDefault(key: string, defaultVal: number): Promise<number> {
+  const val = await getSetting(key)
   return val ? parseInt(val, 10) || defaultVal : defaultVal
 }
 
-router.get('/status', (req: Request, res: Response): void => {
+router.get('/status', async (req: Request, res: Response): Promise<void> => {
   const db = getDb()
   const weekKey = getWeekKey()
   const open = isRegistrationOpen()
-  const forceOpen = getSetting('force_open') === 'true'
-  const forceOpenReason = getSetting('force_open_reason') || ''
-  const forceClose = getSetting('force_close') === 'true'
-  const forceCloseReason = getSetting('force_close_reason') || ''
-  const maxTuesday = getMaxOrDefault('max_tuesday', 10)
-  const maxWednesday = getMaxOrDefault('max_wednesday', 10)
-  const multiDayEnabled = getSetting('multi_day_enabled') === 'true'
+  const forceOpen = (await getSetting('force_open')) === 'true'
+  const forceOpenReason = (await getSetting('force_open_reason')) || ''
+  const forceClose = (await getSetting('force_close')) === 'true'
+  const forceCloseReason = (await getSetting('force_close_reason')) || ''
+  const maxTuesday = await getMaxOrDefault('max_tuesday', 10)
+  const maxWednesday = await getMaxOrDefault('max_wednesday', 10)
+  const multiDayEnabled = (await getSetting('multi_day_enabled')) === 'true'
   const weekDates = getWeekDates()
-  const notificationText = getSetting('notification_text') || ''
+  const notificationText = (await getSetting('notification_text')) || ''
 
-  const tuesdayCount = db.prepare(
+  const tuesdayCount = await db.prepare(
     'SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?'
   ).get(weekKey, 'tuesday') as { count: number }
 
-  const wednesdayCount = db.prepare(
+  const wednesdayCount = await db.prepare(
     'SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?'
   ).get(weekKey, 'wednesday') as { count: number }
 
-  const cancellations = db.prepare(
+  const cancellations = await db.prepare(
     'SELECT class_day, reason FROM class_cancellations WHERE week_key = ?'
   ).all(weekKey) as Array<{ class_day: string; reason: string }>
 
@@ -63,19 +63,19 @@ router.get('/status', (req: Request, res: Response): void => {
   })
 })
 
-router.get('/weeks', (req: Request, res: Response): void => {
+router.get('/weeks', async (req: Request, res: Response): Promise<void> => {
   const db = getDb()
-  const weeks = db.prepare(
+  const weeks = await db.prepare(
     "SELECT DISTINCT week_key FROM registrations ORDER BY week_key"
   ).all() as Array<{ week_key: string }>
   res.json({ weeks: weeks.map(w => w.week_key) })
 })
 
-router.get('/check-member', (req: Request, res: Response): void => {
+router.get('/check-member', async (req: Request, res: Response): Promise<void> => {
   try {
     const name = (req.query.name as string || '').trim()
     const db = getDb()
-    const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
+    const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
 
     if (!member) {
       res.json({ isValid: false, message: '您不是网球小组成员，请联系网球小组组长' })
@@ -83,7 +83,7 @@ router.get('/check-member', (req: Request, res: Response): void => {
     }
 
     const weekKey = getWeekKey()
-    const existingDays = db.prepare(
+    const existingDays = await db.prepare(
       'SELECT class_day FROM registrations WHERE week_key = ? AND name = ?'
     ).all(weekKey, name.trim()) as Array<{ class_day: string }>
 
@@ -99,7 +99,7 @@ router.get('/check-member', (req: Request, res: Response): void => {
   }
 })
 
-router.post('/check-member', (req: Request, res: Response): void => {
+router.post('/check-member', async (req: Request, res: Response): Promise<void> => {
   try {
     const name = (req.body.name || '').trim()
     if (!name) {
@@ -107,7 +107,7 @@ router.post('/check-member', (req: Request, res: Response): void => {
       return
     }
     const db = getDb()
-    const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
+    const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
 
     if (!member) {
       res.json({ isValid: false, message: '您不是网球小组成员，请联系网球小组组长' })
@@ -115,7 +115,7 @@ router.post('/check-member', (req: Request, res: Response): void => {
     }
 
     const weekKey = getWeekKey()
-    const existingDays = db.prepare(
+    const existingDays = await db.prepare(
       'SELECT class_day FROM registrations WHERE week_key = ? AND name = ?'
     ).all(weekKey, name.trim()) as Array<{ class_day: string }>
 
@@ -131,7 +131,7 @@ router.post('/check-member', (req: Request, res: Response): void => {
   }
 })
 
-router.post('/registrations/clear', (req: Request, res: Response): void => {
+router.post('/registrations/clear', async (req: Request, res: Response): Promise<void> => {
   const { password, scope } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -141,15 +141,15 @@ router.post('/registrations/clear', (req: Request, res: Response): void => {
   const db = getDb()
   if (scope === 'week') {
     const weekKey = getWeekKey()
-    db.prepare('DELETE FROM registrations WHERE week_key = ?').run(weekKey)
+    await db.prepare('DELETE FROM registrations WHERE week_key = ?').run(weekKey)
     res.json({ success: true, message: '本周报名记录已清空' })
   } else {
-    db.prepare('DELETE FROM registrations').run()
+    await db.prepare('DELETE FROM registrations').run()
     res.json({ success: true, message: '所有报名记录已清空' })
   }
 })
 
-router.post('/register', (req: Request, res: Response): void => {
+router.post('/register', async (req: Request, res: Response): Promise<void> => {
   const { name, classDay, classDays } = req.body
 
   if (!name || !name.trim()) {
@@ -164,10 +164,10 @@ router.post('/register', (req: Request, res: Response): void => {
   }
 
   const open = isRegistrationOpen()
-  const forceOpen = getSetting('force_open') === 'true'
-  const forceClose = getSetting('force_close') === 'true'
+  const forceOpen = (await getSetting('force_open')) === 'true'
+  const forceClose = (await getSetting('force_close')) === 'true'
   if (forceClose || (!open && !forceOpen)) {
-    const reason = getSetting('force_close_reason') || '报名暂未开放'
+    const reason = (await getSetting('force_close_reason')) || '报名暂未开放'
     res.status(403).json({ success: false, message: reason })
     return
   }
@@ -175,23 +175,23 @@ router.post('/register', (req: Request, res: Response): void => {
   const db = getDb()
   const weekKey = getWeekKey()
 
-  const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
+  const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
   if (!member) {
     res.status(403).json({ success: false, message: '您不是网球小组成员，请联系网球小组组长' })
     return
   }
 
-  const maxTuesday = getMaxOrDefault('max_tuesday', 10)
-  const maxWednesday = getMaxOrDefault('max_wednesday', 10)
+  const maxTuesday = await getMaxOrDefault('max_tuesday', 10)
+  const maxWednesday = await getMaxOrDefault('max_wednesday', 10)
 
-  const multiDayEnabled = getSetting('multi_day_enabled') === 'true'
+  const multiDayEnabled = (await getSetting('multi_day_enabled')) === 'true'
   if (!multiDayEnabled && days.length > 1) {
     res.status(400).json({ success: false, message: '当前仅允许单选上课日' })
     return
   }
 
   if (!multiDayEnabled) {
-    const anyExisting = db.prepare(
+    const anyExisting = await db.prepare(
       'SELECT id, class_day FROM registrations WHERE week_key = ? AND name = ? LIMIT 1'
     ).get(weekKey, name.trim()) as { id: number; class_day: string } | undefined
 
@@ -206,7 +206,7 @@ router.post('/register', (req: Request, res: Response): void => {
   const results: Array<{ classDay: string; classDate: string; success: boolean; message?: string }> = []
 
   for (const day of days) {
-    const existing = db.prepare(
+    const existing = await db.prepare(
       'SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? LIMIT 1'
     ).get(weekKey, name.trim(), day) as { id: number } | undefined
 
@@ -218,7 +218,7 @@ router.post('/register', (req: Request, res: Response): void => {
     }
 
     const maxCap = day === 'tuesday' ? maxTuesday : maxWednesday
-    const count = db.prepare(
+    const count = await db.prepare(
       'SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?'
     ).get(weekKey, day) as { count: number }
 
@@ -229,7 +229,7 @@ router.post('/register', (req: Request, res: Response): void => {
 
     const classDate = getClassDate(day)
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(name.trim(), '', day, classDate, member.source, weekKey, getBeijingTimeString())
 
@@ -258,7 +258,7 @@ router.post('/register', (req: Request, res: Response): void => {
   })
 })
 
-router.get('/registrations', (req: Request, res: Response): void => {
+router.get('/registrations', async (req: Request, res: Response): Promise<void> => {
   const week = (req.query.week as string) || getWeekKey()
   const sourceFilter = (req.query.source as string) || ''
   const sort = (req.query.sort as string) || ''
@@ -287,7 +287,7 @@ router.get('/registrations', (req: Request, res: Response): void => {
     sql += 'class_day, created_at'
   }
 
-  const registrations = db.prepare(sql).all(...params) as Array<{
+  const registrations = await db.prepare(sql).all(...params) as Array<{
     id: number
     name: string
     phone: string
@@ -301,36 +301,36 @@ router.get('/registrations', (req: Request, res: Response): void => {
     reject_reason: string | null
   }>
 
-  res.json({
-    registrations: registrations.map(r => {
-      let checkInTypeLabel = ''
-      if (r.check_in_type === 'applied') {
-        const hasScheduled = db.prepare(
-          'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
-        ).get(r.week_key, r.name, r.class_day) as { cnt: number }
-        checkInTypeLabel = hasScheduled.cnt > 0 ? '预约签到' : '临时签到'
-      } else if (r.check_in_type === 'walkin') {
-        checkInTypeLabel = '临时签到'
-      } else if (r.check_in_type === 'approved') {
-        checkInTypeLabel = '已签到'
-      } else if (r.check_in_type === 'rejected') {
-        checkInTypeLabel = '已驳回'
-      }
-      return {
-        id: r.id,
-        name: r.name,
-        classDay: r.class_day,
-        classDate: r.class_date,
-        source: r.source,
-        createdAt: r.created_at,
-        weekKey: r.week_key,
-        checkInType: r.check_in_type || null,
-        checkInTime: r.check_in_time || null,
-        rejectReason: r.reject_reason || null,
-        checkInTypeLabel,
-      }
-    }),
-  })
+  const enriched = await Promise.all(registrations.map(async r => {
+    let checkInTypeLabel = ''
+    if (r.check_in_type === 'applied') {
+      const hasScheduled = await db.prepare(
+        'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
+      ).get(r.week_key, r.name, r.class_day) as { cnt: number }
+      checkInTypeLabel = hasScheduled.cnt > 0 ? '预约签到' : '临时签到'
+    } else if (r.check_in_type === 'walkin') {
+      checkInTypeLabel = '临时签到'
+    } else if (r.check_in_type === 'approved') {
+      checkInTypeLabel = '已签到'
+    } else if (r.check_in_type === 'rejected') {
+      checkInTypeLabel = '已驳回'
+    }
+    return {
+      id: r.id,
+      name: r.name,
+      classDay: r.class_day,
+      classDate: r.class_date,
+      source: r.source,
+      createdAt: r.created_at,
+      weekKey: r.week_key,
+      checkInType: r.check_in_type || null,
+      checkInTime: r.check_in_time || null,
+      rejectReason: r.reject_reason || null,
+      checkInTypeLabel,
+    }
+  }))
+
+  res.json({ registrations: enriched })
 })
 
 router.get('/registrations/export-template', (_req: Request, res: Response): void => {
@@ -341,7 +341,7 @@ router.get('/registrations/export-template', (_req: Request, res: Response): voi
   res.send(content)
 })
 
-router.post('/registrations/import', (req: Request, res: Response): void => {
+router.post('/registrations/import', async (req: Request, res: Response): Promise<void> => {
   const { password, content } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -402,7 +402,7 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
       continue
     }
 
-    const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name) as any
+    const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name) as any
     if (!member) {
       errors.push(`第${i + 1}行：成员"${name}"不在名单中，跳过`)
       continue
@@ -411,9 +411,9 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
     const finalSource = source || member.source
     const classDate = getClassDate(mappedDay, weekKey)
 
-    const exists = db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ?').get(weekKey, name, mappedDay)
+    const exists = await db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ?').get(weekKey, name, mappedDay)
     if (exists) {
-      db.prepare('DELETE FROM registrations WHERE id = ?').run((exists as any).id)
+      await db.prepare('DELETE FROM registrations WHERE id = ?').run((exists as any).id)
       errors.push(`第${i + 1}行："${name}"${mappedDay === 'tuesday' ? '周二' : '周三'}原有记录已覆盖`)
     }
 
@@ -424,7 +424,7 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
       const params = checkInType
         ? [name, phone, mappedDay, classDate, finalSource, weekKey, createdAt, checkInType, checkInTime]
         : [name, phone, mappedDay, classDate, finalSource, weekKey, createdAt]
-      db.prepare(sql).run(...params)
+      await db.prepare(sql).run(...params)
       success++
     } catch (e: any) {
       errors.push(`第${i + 1}行：插入失败 - ${e.message}`)
@@ -434,7 +434,7 @@ router.post('/registrations/import', (req: Request, res: Response): void => {
   res.json({ success: true, imported: success, total: lines.length - 1, errors: errors.slice(0, 50) })
 })
 
-router.post('/check-in', (req: Request, res: Response): void => {
+router.post('/check-in', async (req: Request, res: Response): Promise<void> => {
   const { password, id } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -446,17 +446,17 @@ router.post('/check-in', (req: Request, res: Response): void => {
     return
   }
   const db = getDb()
-  const registration = db.prepare('SELECT * FROM registrations WHERE id = ?').get(id) as any
+  const registration = await db.prepare('SELECT * FROM registrations WHERE id = ?').get(id) as any
   if (!registration) {
     res.status(404).json({ success: false, message: '报名记录不存在' })
     return
   }
   const timeStr = getBeijingTimeString()
-  db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ? WHERE id = ?').run('scheduled', timeStr, id)
+  await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ? WHERE id = ?').run('scheduled', timeStr, id)
   res.json({ success: true, message: '签到成功', checkInTime: timeStr })
 })
 
-router.post('/walk-in', (req: Request, res: Response): void => {
+router.post('/walk-in', async (req: Request, res: Response): Promise<void> => {
   const { password, name, source, classDay } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -472,14 +472,14 @@ router.post('/walk-in', (req: Request, res: Response): void => {
   const classDate = getClassDate(classDay, weekKey)
   const timeStr = getBeijingTimeString()
 
-  db.prepare(
+  await db.prepare(
     'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(name.trim(), '', classDay, classDate, source, weekKey, 'walkin', timeStr, timeStr)
 
   res.json({ success: true, message: '临时签到成功', checkInTime: timeStr })
 })
 
-router.post('/apply-checkin', (req: Request, res: Response): void => {
+router.post('/apply-checkin', async (req: Request, res: Response): Promise<void> => {
   const { name, classDay } = req.body
   if (!name || !name.trim() || !classDay || !['tuesday', 'wednesday'].includes(classDay)) {
     res.status(400).json({ success: false, message: '参数错误' })
@@ -488,13 +488,13 @@ router.post('/apply-checkin', (req: Request, res: Response): void => {
   const db = getDb()
   const weekKey = getWeekKey()
 
-  const member = db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
+  const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
   if (!member) {
     res.status(403).json({ success: false, message: '您不是网球小组成员，请联系网球小组组长' })
     return
   }
 
-  const existing = db.prepare(
+  const existing = await db.prepare(
     'SELECT id, check_in_type FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? ORDER BY id DESC LIMIT 1'
   ).get(weekKey, name.trim(), classDay) as { id: number; check_in_type: string | null } | undefined
 
@@ -511,9 +511,8 @@ router.post('/apply-checkin', (req: Request, res: Response): void => {
       res.status(400).json({ success: false, message: '您的签到申请已被驳回，请联系管理员' })
       return
     }
-    // 已有报名记录（check_in_type IS NULL），更新签到信息
     const timeStr = getBeijingTimeString()
-    db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ? WHERE id = ?')
+    await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ? WHERE id = ?')
       .run('applied', timeStr, existing.id)
     res.json({ success: true, message: '签到申请已提交，请等待管理员审批' })
     return
@@ -522,14 +521,14 @@ router.post('/apply-checkin', (req: Request, res: Response): void => {
   const classDate = getClassDate(classDay, weekKey)
   const timeStr = getBeijingTimeString()
 
-  db.prepare(
+  await db.prepare(
     'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(name.trim(), '', classDay, classDate, member.source, weekKey, 'applied', timeStr, timeStr)
 
   res.json({ success: true, message: '签到申请已提交，请等待管理员审批' })
 })
 
-router.post('/checkin-result', (req: Request, res: Response): void => {
+router.post('/checkin-result', async (req: Request, res: Response): Promise<void> => {
   const { name } = req.body
   if (!name || !name.trim()) {
     res.status(400).json({ success: false, message: '参数错误' })
@@ -538,7 +537,7 @@ router.post('/checkin-result', (req: Request, res: Response): void => {
   const db = getDb()
   const weekKey = getWeekKey()
 
-  const records = db.prepare(
+  const records = await db.prepare(
     'SELECT class_day, check_in_type, check_in_time, reject_reason FROM registrations WHERE week_key = ? AND name = ? AND check_in_type IS NOT NULL AND check_in_type IN (?, ?, ?, ?) ORDER BY class_day'
   ).all(weekKey, name.trim(), 'applied', 'approved', 'rejected', 'walkin') as Array<{
     class_day: string
@@ -557,7 +556,7 @@ router.post('/checkin-result', (req: Request, res: Response): void => {
   res.json({ results })
 })
 
-router.post('/checkin-review', (req: Request, res: Response): void => {
+router.post('/checkin-review', async (req: Request, res: Response): Promise<void> => {
   const { password, registrationId, action, reason } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -574,7 +573,7 @@ router.post('/checkin-review', (req: Request, res: Response): void => {
   }
 
   const db = getDb()
-  const registration = db.prepare('SELECT * FROM registrations WHERE id = ?').get(registrationId) as any
+  const registration = await db.prepare('SELECT * FROM registrations WHERE id = ?').get(registrationId) as any
   if (!registration) {
     res.status(404).json({ success: false, message: '报名记录不存在' })
     return
@@ -587,24 +586,23 @@ router.post('/checkin-review', (req: Request, res: Response): void => {
   const timeStr = getBeijingTimeString()
 
   if (action === 'approve') {
-    // Check if user has a regular registration for this day
-    const hasScheduled = db.prepare(
+    const hasScheduled = await db.prepare(
       'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
     ).get(registration.week_key, registration.name, registration.class_day) as { cnt: number }
 
     if (hasScheduled.cnt > 0) {
-      db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('approved', timeStr, registrationId)
+      await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('approved', timeStr, registrationId)
     } else {
-      db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('walkin', timeStr, registrationId)
+      await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('walkin', timeStr, registrationId)
     }
     res.json({ success: true, message: '签到审批通过', checkInTime: timeStr })
   } else {
-    db.prepare('UPDATE registrations SET check_in_type = ?, reject_reason = ? WHERE id = ?').run('rejected', reason.trim(), registrationId)
+    await db.prepare('UPDATE registrations SET check_in_type = ?, reject_reason = ? WHERE id = ?').run('rejected', reason.trim(), registrationId)
     res.json({ success: true, message: '已驳回签到申请' })
   }
 })
 
-router.post('/reschedule', (req: Request, res: Response): void => {
+router.post('/reschedule', async (req: Request, res: Response): Promise<void> => {
   const { password, id, newClassDay } = req.body
 
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
@@ -620,7 +618,7 @@ router.post('/reschedule', (req: Request, res: Response): void => {
   }
 
   const db = getDb()
-  const registration = db.prepare('SELECT * FROM registrations WHERE id = ?').get(id) as any
+  const registration = await db.prepare('SELECT * FROM registrations WHERE id = ?').get(id) as any
   if (!registration) {
     res.status(404).json({ success: false, message: '报名记录不存在' })
     return
@@ -631,20 +629,20 @@ router.post('/reschedule', (req: Request, res: Response): void => {
     return
   }
 
-  const maxCap = newClassDay === 'tuesday' ? getMaxOrDefault('max_tuesday', 10) : getMaxOrDefault('max_wednesday', 10)
-  const count = db.prepare('SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?').get(registration.week_key, newClassDay) as { count: number }
+  const maxCap = newClassDay === 'tuesday' ? await getMaxOrDefault('max_tuesday', 10) : await getMaxOrDefault('max_wednesday', 10)
+  const count = await db.prepare('SELECT COUNT(*) as count FROM registrations WHERE week_key = ? AND class_day = ?').get(registration.week_key, newClassDay) as { count: number }
   if (count.count >= maxCap) {
     res.status(400).json({ success: false, message: '目标时间名额已满' })
     return
   }
 
   const newClassDate = getClassDate(newClassDay, registration.week_key)
-  db.prepare('UPDATE registrations SET class_day = ?, class_date = ? WHERE id = ?').run(newClassDay, newClassDate, id)
+  await db.prepare('UPDATE registrations SET class_day = ?, class_date = ? WHERE id = ?').run(newClassDay, newClassDate, id)
 
   res.json({ success: true, message: '调课成功' })
 })
 
-router.post('/class-cancel', (req: Request, res: Response): void => {
+router.post('/class-cancel', async (req: Request, res: Response): Promise<void> => {
   const { password, classDay, reason } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -657,13 +655,13 @@ router.post('/class-cancel', (req: Request, res: Response): void => {
   }
   const db = getDb()
   const weekKey = getWeekKey()
-  db.prepare(
+  await db.prepare(
     'INSERT OR REPLACE INTO class_cancellations (week_key, class_day, reason, created_at) VALUES (?, ?, ?, ?)'
   ).run(weekKey, classDay, reason.trim(), getBeijingTimeString())
   res.json({ success: true, message: '课程已取消' })
 })
 
-router.post('/class-cancel/remove', (req: Request, res: Response): void => {
+router.post('/class-cancel/remove', async (req: Request, res: Response): Promise<void> => {
   const { password, classDay } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -676,22 +674,22 @@ router.post('/class-cancel/remove', (req: Request, res: Response): void => {
   }
   const db = getDb()
   const weekKey = getWeekKey()
-  db.prepare(
+  await db.prepare(
     'DELETE FROM class_cancellations WHERE week_key = ? AND class_day = ?'
   ).run(weekKey, classDay)
   res.json({ success: true, message: '课程取消已恢复' })
 })
 
-router.get('/class-cancellations', (req: Request, res: Response): void => {
+router.get('/class-cancellations', async (req: Request, res: Response): Promise<void> => {
   const week = (req.query.week as string) || getWeekKey()
   const db = getDb()
-  const cancellations = db.prepare(
+  const cancellations = await db.prepare(
     'SELECT class_day, reason, created_at FROM class_cancellations WHERE week_key = ?'
   ).all(week) as Array<{ class_day: string; reason: string; created_at: string }>
   res.json({ cancellations })
 })
 
-router.get('/members', (req: Request, res: Response): void => {
+router.get('/members', async (req: Request, res: Response): Promise<void> => {
   const sourceFilter = (req.query.source as string) || ''
   const sort = (req.query.sort as string) || ''
   const db = getDb()
@@ -713,11 +711,11 @@ router.get('/members', (req: Request, res: Response): void => {
     sql += 'id'
   }
 
-  const members = db.prepare(sql).all(...params) as Array<{ id: number; name: string; source: string }>
+  const members = await db.prepare(sql).all(...params) as Array<{ id: number; name: string; source: string }>
   res.json({ members: members })
 })
 
-router.post('/members/import', (req: Request, res: Response): void => {
+router.post('/members/import', async (req: Request, res: Response): Promise<void> => {
   const { password, data } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -726,11 +724,11 @@ router.post('/members/import', (req: Request, res: Response): void => {
   }
 
   const db = getDb()
-  const insert = db.prepare('INSERT OR REPLACE INTO members (name, source) VALUES (?, ?)')
   let successCount = 0
   for (const m of data || []) {
     if (m.name && m.source && ['CNCC', 'CFID', 'SQQ'].includes(m.source)) {
-      insert.run(m.name.trim(), m.source)
+      await db.prepare('INSERT OR REPLACE INTO members (name, source) VALUES (?, ?)')
+        .run(m.name.trim(), m.source)
       successCount++
     }
   }
@@ -748,9 +746,9 @@ router.get('/members/export-template', (req: Request, res: Response): void => {
   res.send(csv)
 })
 
-router.get('/members/export', (req: Request, res: Response): void => {
+router.get('/members/export', async (req: Request, res: Response): Promise<void> => {
   const db = getDb()
-  const members = db.prepare('SELECT * FROM members ORDER BY id').all() as Array<{ name: string; source: string }>
+  const members = await db.prepare('SELECT * FROM members ORDER BY id').all() as Array<{ name: string; source: string }>
   const bom = '\uFEFF'
   const header = '姓名,来自'
   const rows = members.map(m => `${m.name},${m.source}`).join('\n')
@@ -761,7 +759,7 @@ router.get('/members/export', (req: Request, res: Response): void => {
   res.send(csv)
 })
 
-router.post('/members/delete', (req: Request, res: Response): void => {
+router.post('/members/delete', async (req: Request, res: Response): Promise<void> => {
   const { password, id } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -769,11 +767,11 @@ router.post('/members/delete', (req: Request, res: Response): void => {
     return
   }
   const db = getDb()
-  db.prepare('DELETE FROM members WHERE id = ?').run(id)
+  await db.prepare('DELETE FROM members WHERE id = ?').run(id)
   res.json({ success: true })
 })
 
-router.post('/members/add', (req: Request, res: Response): void => {
+router.post('/members/add', async (req: Request, res: Response): Promise<void> => {
   const { password, name, source } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -785,16 +783,16 @@ router.post('/members/add', (req: Request, res: Response): void => {
     return
   }
   const db = getDb()
-  const existing = db.prepare('SELECT id FROM members WHERE name = ?').get(name.trim())
+  const existing = await db.prepare('SELECT id FROM members WHERE name = ?').get(name.trim())
   if (existing) {
     res.status(400).json({ success: false, message: '该成员已存在' })
     return
   }
-  db.prepare('INSERT INTO members (name, source) VALUES (?, ?)').run(name.trim(), source)
+  await db.prepare('INSERT INTO members (name, source) VALUES (?, ?)').run(name.trim(), source)
   res.json({ success: true, message: '成员已添加' })
 })
 
-router.post('/members/update', (req: Request, res: Response): void => {
+router.post('/members/update', async (req: Request, res: Response): Promise<void> => {
   const { password, id, name, source } = req.body
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
   if (!password || hashPassword(password) !== storedHash) {
@@ -806,16 +804,16 @@ router.post('/members/update', (req: Request, res: Response): void => {
     return
   }
   const db = getDb()
-  const dup = db.prepare('SELECT id FROM members WHERE name = ? AND id != ?').get(name.trim(), id)
+  const dup = await db.prepare('SELECT id FROM members WHERE name = ? AND id != ?').get(name.trim(), id)
   if (dup) {
     res.status(400).json({ success: false, message: '该姓名已被其他成员使用' })
     return
   }
-  db.prepare('UPDATE members SET name = ?, source = ? WHERE id = ?').run(name.trim(), source, id)
+  await db.prepare('UPDATE members SET name = ?, source = ? WHERE id = ?').run(name.trim(), source, id)
   res.json({ success: true, message: '成员已更新' })
 })
 
-router.post('/export-all', (req: Request, res: Response): void => {
+router.post('/export-all', async (req: Request, res: Response): Promise<void> => {
   const { password } = req.body
 
   const storedHash = process.env.EXPORT_PASSWORD_HASH || hashPassword('tEnis2026%')
@@ -827,7 +825,7 @@ router.post('/export-all', (req: Request, res: Response): void => {
 
   const db = getDb()
 
-  const registrations = db.prepare(
+  const registrations = await db.prepare(
     'SELECT * FROM registrations ORDER BY week_key, class_day, created_at'
   ).all() as Array<{
     name: string
@@ -868,11 +866,11 @@ router.post('/export-all', (req: Request, res: Response): void => {
   res.send(csv)
 })
 
-router.get('/export', (req: Request, res: Response): void => {
+router.get('/export', async (req: Request, res: Response): Promise<void> => {
   const week = (req.query.week as string) || getWeekKey()
   const db = getDb()
 
-  const registrations = db.prepare(
+  const registrations = await db.prepare(
     'SELECT * FROM registrations WHERE week_key = ? ORDER BY class_day, created_at'
   ).all(week) as Array<{
     name: string
@@ -910,7 +908,7 @@ router.get('/export', (req: Request, res: Response): void => {
   res.send(csv)
 })
 
-router.get('/statistics', (req: Request, res: Response): void => {
+router.get('/statistics', async (req: Request, res: Response): Promise<void> => {
   const year = (req.query.year as string) || new Date().getFullYear().toString()
   const week = (req.query.week as string) || ''
   const mode = (req.query.mode as string) || 'year'
@@ -927,7 +925,7 @@ router.get('/statistics', (req: Request, res: Response): void => {
   const weekCondition = mode === 'week' && week ? 'week_key = ?' : 'week_key LIKE ?'
   const weekParam = mode === 'week' && week ? week : `${year}%`
 
-  const data = db.prepare(`
+  const data = await db.prepare(`
     SELECT m.name, m.source,
       COALESCE(r.total_count, 0) as total_count,
       COALESCE(r.tuesday_count, 0) as tuesday_count,
@@ -966,19 +964,19 @@ router.post('/auth-admin', (req: Request, res: Response): void => {
   res.json({ success: true })
 })
 
-router.get('/settings', (req: Request, res: Response): void => {
-  const forceOpen = getSetting('force_open') === 'true'
-  const forceOpenReason = getSetting('force_open_reason') || ''
-  const forceClose = getSetting('force_close') === 'true'
-  const forceCloseReason = getSetting('force_close_reason') || ''
-  const maxTuesday = getMaxOrDefault('max_tuesday', 10)
-  const maxWednesday = getMaxOrDefault('max_wednesday', 10)
-  const multiDayEnabled = getSetting('multi_day_enabled') === 'true'
-  const notificationText = getSetting('notification_text') || ''
+router.get('/settings', async (req: Request, res: Response): Promise<void> => {
+  const forceOpen = (await getSetting('force_open')) === 'true'
+  const forceOpenReason = (await getSetting('force_open_reason')) || ''
+  const forceClose = (await getSetting('force_close')) === 'true'
+  const forceCloseReason = (await getSetting('force_close_reason')) || ''
+  const maxTuesday = await getMaxOrDefault('max_tuesday', 10)
+  const maxWednesday = await getMaxOrDefault('max_wednesday', 10)
+  const multiDayEnabled = (await getSetting('multi_day_enabled')) === 'true'
+  const notificationText = (await getSetting('notification_text')) || ''
   res.json({ forceOpen, forceOpenReason, forceClose, forceCloseReason, maxTuesday, maxWednesday, multiDayEnabled, notificationText })
 })
 
-router.post('/settings', (req: Request, res: Response): void => {
+router.post('/settings', async (req: Request, res: Response): Promise<void> => {
   const { key, value } = req.body
 
   if (!key) {
@@ -986,7 +984,7 @@ router.post('/settings', (req: Request, res: Response): void => {
     return
   }
 
-  setSetting(key, String(value))
+  await setSetting(key, String(value))
   res.json({ success: true, key, value: String(value) })
 })
 

@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import pg from 'pg'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
@@ -8,106 +9,335 @@ const __dirname = path.dirname(__filename)
 
 const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', 'data')
 const dbPath = process.env.DB_PATH || path.join(dataDir, 'registrations.db')
+const databaseUrl = process.env.DATABASE_URL
 
-let db: Database.Database
-
-export function getDb(): Database.Database {
-  if (!db) {
-    fs.mkdirSync(dataDir, { recursive: true })
-    db = new Database(dbPath)
-    db.pragma('journal_mode = WAL')
-    initDb()
-  }
-  return db
+export interface Statement {
+  get(...params: any[]): Promise<any>
+  all(...params: any[]): Promise<any[]>
+  run(...params: any[]): Promise<{ lastInsertRowid?: number; changes?: number }>
 }
 
-function initDb() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS registrations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      phone TEXT NOT NULL,
-      class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
-      class_date TEXT,
-      source TEXT NOT NULL DEFAULT 'CNCC',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      week_key TEXT NOT NULL
-    );
+export interface Db {
+  prepare(sql: string): Statement
+  exec(sql: string): Promise<void>
+}
 
-    CREATE INDEX IF NOT EXISTS idx_registrations_week ON registrations(week_key);
-    CREATE INDEX IF NOT EXISTS idx_registrations_week_day ON registrations(week_key, class_day);
+let dbInstance: Db | null = null
+let initPromise: Promise<void> | null = null
 
-    CREATE TABLE IF NOT EXISTS members (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      source TEXT NOT NULL DEFAULT 'CNCC'
-    );
-  `)
+const tableConflictColumns: Record<string, string[]> = {
+  settings: ['key'],
+  members: ['name'],
+  class_cancellations: ['week_key', 'class_day'],
+}
 
-  try {
-    db.exec('ALTER TABLE registrations ADD COLUMN class_date TEXT')
-  } catch {
+function extractTableName(sql: string): string | null {
+  const match = sql.match(/INTO\s+(\w+)/i)
+  return match ? match[1] : null
+}
+
+function convertPlaceholders(sql: string): string {
+  let idx = 0
+  return sql.replace(/\?/g, () => {
+    idx++
+    return `$${idx}`
+  })
+}
+
+function convertInsertOrIgnore(sql: string): string {
+  const tableName = extractTableName(sql)
+  if (!tableName) return sql
+  const conflictCols = tableConflictColumns[tableName]
+  if (!conflictCols) return sql
+  return sql.replace(/INSERT\s+OR\s+IGNORE\s+INTO/i, 'INSERT INTO') + ` ON CONFLICT (${conflictCols.join(', ')}) DO NOTHING`
+}
+
+function convertInsertOrReplace(sql: string): string {
+  const tableName = extractTableName(sql)
+  if (!tableName) return sql
+  const conflictCols = tableConflictColumns[tableName]
+  if (!conflictCols) return sql
+
+  const valuesMatch = sql.match(/VALUES\s*\(([^)]+)\)/i)
+  const colMatch = sql.match(/INSERT\s+OR\s+REPLACE\s+INTO\s+\w+\s*\(([^)]+)\)/i)
+  
+  if (!colMatch || !valuesMatch) return sql
+
+  const columns = colMatch[1].split(',').map(c => c.trim())
+  const updateCols = columns.filter(c => !conflictCols.includes(c))
+  const updateSet = updateCols.map(c => `${c} = EXCLUDED.${c}`).join(', ')
+
+  return sql.replace(/INSERT\s+OR\s+REPLACE\s+INTO/i, 'INSERT INTO') + 
+    ` ON CONFLICT (${conflictCols.join(', ')}) DO UPDATE SET ${updateSet}`
+}
+
+function convertSqlForPg(sql: string): string {
+  let result = sql
+  if (/INSERT\s+OR\s+IGNORE/i.test(result)) {
+    result = convertInsertOrIgnore(result)
+  } else if (/INSERT\s+OR\s+REPLACE/i.test(result)) {
+    result = convertInsertOrReplace(result)
+  }
+  return result
+}
+
+function convertDatetimeNow(sql: string): string {
+  return sql.replace(/datetime\('now'\)/gi, 'NOW()')
+}
+
+class SqliteStatement implements Statement {
+  private stmt: Database.Statement
+
+  constructor(stmt: Database.Statement) {
+    this.stmt = stmt
   }
 
-  try {
-    db.exec('ALTER TABLE registrations ADD COLUMN source TEXT NOT NULL DEFAULT \'CNCC\'')
-  } catch {
+  async get(...params: any[]): Promise<any> {
+    return this.stmt.get(...params)
   }
 
-  try {
-    db.exec('ALTER TABLE registrations ADD COLUMN class_date TEXT')
-  } catch {
+  async all(...params: any[]): Promise<any[]> {
+    return this.stmt.all(...params) as any[]
   }
 
-  try {
-    db.exec('ALTER TABLE registrations ADD COLUMN check_in_type TEXT')
-  } catch {
+  async run(...params: any[]): Promise<{ lastInsertRowid?: number; changes?: number }> {
+    const result = this.stmt.run(...params)
+    return {
+      lastInsertRowid: result.lastInsertRowid as number,
+      changes: result.changes,
+    }
+  }
+}
+
+class SqliteDb implements Db {
+  private db: Database.Database
+
+  constructor(dbPath: string) {
+    this.db = new Database(dbPath)
+    this.db.pragma('journal_mode = WAL')
   }
 
-  try {
-    db.exec('ALTER TABLE registrations ADD COLUMN check_in_time TEXT')
-  } catch {
+  prepare(sql: string): Statement {
+    return new SqliteStatement(this.db.prepare(sql))
   }
 
-  try {
-    db.exec('ALTER TABLE registrations ADD COLUMN reject_reason TEXT')
-  } catch {
+  async exec(sql: string): Promise<void> {
+    this.db.exec(sql)
   }
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `)
+  getRawDb(): Database.Database {
+    return this.db
+  }
+}
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS class_cancellations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      week_key TEXT NOT NULL,
-      class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
-      reason TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(week_key, class_day)
-    );
-  `)
+class PgStatement implements Statement {
+  private pool: pg.Pool
+  private sql: string
 
-  // Default settings
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
+  constructor(pool: pg.Pool, sql: string) {
+    this.pool = pool
+    this.sql = convertPlaceholders(convertSqlForPg(sql))
+  }
+
+  async get(...params: any[]): Promise<any> {
+    const result = await this.pool.query(this.sql, params)
+    return result.rows[0]
+  }
+
+  async all(...params: any[]): Promise<any[]> {
+    const result = await this.pool.query(this.sql, params)
+    return result.rows
+  }
+
+  async run(...params: any[]): Promise<{ lastInsertRowid?: number; changes?: number }> {
+    const isInsert = /INSERT/i.test(this.sql)
+    let sql = this.sql
+    if (isInsert) {
+      sql += ' RETURNING id'
+    }
+    const result = await this.pool.query(sql, params)
+    const changes = result.rowCount || 0
+    const lastInsertRowid = result.rows[0]?.id
+    return { lastInsertRowid, changes }
+  }
+}
+
+class PgDb implements Db {
+  pool: pg.Pool
+
+  constructor(connectionString: string) {
+    this.pool = new pg.Pool({ connectionString })
+  }
+
+  prepare(sql: string): Statement {
+    return new PgStatement(this.pool, sql)
+  }
+
+  async exec(sql: string): Promise<void> {
+    const converted = convertDatetimeNow(sql)
+    await this.pool.query(converted)
+  }
+}
+
+export function getDb(): Db {
+  if (!dbInstance) {
+    if (databaseUrl) {
+      dbInstance = new PgDb(databaseUrl)
+    } else {
+      fs.mkdirSync(dataDir, { recursive: true })
+      dbInstance = new SqliteDb(dbPath)
+    }
+    initPromise = initDb()
+  }
+  return dbInstance
+}
+
+export function waitDbReady(): Promise<void> {
+  getDb()
+  return initPromise!
+}
+
+function isPostgres(): boolean {
+  return !!databaseUrl
+}
+
+async function initDb() {
+  const db = getDb()
+
+  if (isPostgres()) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS registrations (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(255) NOT NULL,
+        class_day VARCHAR(20) NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
+        class_date VARCHAR(50),
+        source VARCHAR(50) NOT NULL DEFAULT 'CNCC',
+        created_at VARCHAR(50) NOT NULL DEFAULT NOW(),
+        week_key VARCHAR(20) NOT NULL
+      );
+    `)
+
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_week ON registrations(week_key)`)
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_week_day ON registrations(week_key, class_day)`)
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS members (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        source VARCHAR(50) NOT NULL DEFAULT 'CNCC'
+      );
+    `)
+
+    const columnsToAdd = [
+      { table: 'registrations', column: 'class_date', type: 'VARCHAR(50)' },
+      { table: 'registrations', column: 'source', type: 'VARCHAR(50)', default: "'CNCC'" },
+      { table: 'registrations', column: 'check_in_type', type: 'VARCHAR(50)' },
+      { table: 'registrations', column: 'check_in_time', type: 'VARCHAR(50)' },
+      { table: 'registrations', column: 'reject_reason', type: 'TEXT' },
+    ]
+
+    for (const col of columnsToAdd) {
+      try {
+        const defaultSql = col.default ? ` DEFAULT ${col.default}` : ''
+        await db.exec(`ALTER TABLE ${col.table} ADD COLUMN IF NOT EXISTS ${col.column} ${col.type}${defaultSql}`)
+      } catch {
+      }
+    }
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key VARCHAR(255) PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `)
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS class_cancellations (
+        id SERIAL PRIMARY KEY,
+        week_key VARCHAR(20) NOT NULL,
+        class_day VARCHAR(20) NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
+        reason TEXT NOT NULL,
+        created_at VARCHAR(50) NOT NULL DEFAULT NOW(),
+        UNIQUE(week_key, class_day)
+      );
+    `)
+  } else {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS registrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
+        class_date TEXT,
+        source TEXT NOT NULL DEFAULT 'CNCC',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        week_key TEXT NOT NULL
+      );
+    `)
+
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_week ON registrations(week_key)`)
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_week_day ON registrations(week_key, class_day)`)
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL DEFAULT 'CNCC'
+      );
+    `)
+
+    const sqliteDb = (db as SqliteDb).getRawDb()
+    const alterStatements = [
+      'ALTER TABLE registrations ADD COLUMN class_date TEXT',
+      'ALTER TABLE registrations ADD COLUMN source TEXT NOT NULL DEFAULT \'CNCC\'',
+      'ALTER TABLE registrations ADD COLUMN check_in_type TEXT',
+      'ALTER TABLE registrations ADD COLUMN check_in_time TEXT',
+      'ALTER TABLE registrations ADD COLUMN reject_reason TEXT',
+    ]
+
+    for (const stmt of alterStatements) {
+      try {
+        sqliteDb.exec(stmt)
+      } catch {
+      }
+    }
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `)
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS class_cancellations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        week_key TEXT NOT NULL,
+        class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(week_key, class_day)
+      );
+    `)
+  }
+
+  await db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
     .run('notification_text', '1.本年网球课报名仅限预约制，不欢迎临时上课。\n2.一般来说，每周一9:00-周二17:00开放报名当周课程，可选周二和周三，为了保证自由度，可多选，为了保证上课质量，每天都名额限制，所以为了让更多人参与，大家尽量单选。\n3.预约后，请在上课时找小组长签到，也可以在主页面最下方发起签到申请。\n4.天气有变，可能会取消课程，请提前关注天气预报。')
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
+  
+  await db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
     .run('multi_day_enabled', 'true')
 }
 
-export function getSetting(key: string): string | null {
+export async function getSetting(key: string): Promise<string | null> {
   const db = getDb()
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
+  const row = await db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
   return row ? row.value : null
 }
 
-export function setSetting(key: string, value: string): void {
+export async function setSetting(key: string, value: string): Promise<void> {
   const db = getDb()
-  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value)
+  await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value)
 }
 
 export function getBeijingTimeString(): string {
@@ -202,7 +432,6 @@ export function isRegistrationOpen(): boolean {
 
   const day = beijingTime.getDay()
   const hour = beijingTime.getHours()
-  // Open: Monday 9:00 ~ Tuesday 17:00 Beijing time
   return (day === 1 && hour >= 9) || (day === 2 && hour < 17)
 }
 
