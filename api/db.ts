@@ -153,7 +153,10 @@ class PgStatement implements Statement {
     const isInsert = /INSERT/i.test(this.sql)
     let sql = this.sql
     if (isInsert) {
-      sql += ' RETURNING id'
+      const tableName = extractTableName(sql)
+      if (tableName && ['registrations', 'members', 'class_cancellations'].includes(tableName.toLowerCase())) {
+        sql += ' RETURNING id'
+      }
     }
     const result = await this.pool.query(sql, params)
     const changes = result.rowCount || 0
