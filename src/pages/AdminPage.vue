@@ -311,19 +311,25 @@
                       </span>
                     </td>
                     <td class="px-5 py-3.5 text-sm text-gray-500">{{ r.classDate }}</td>
-                    <td class="px-5 py-3.5 text-sm text-gray-400">{{ r.createdAt }}</td>
+                    <td class="px-5 py-3.5 text-sm text-gray-400">{{ r.createdAt || '—' }}</td>
                     <td class="px-5 py-3.5 text-sm whitespace-nowrap">
                       <template v-if="!r.checkInType">
                         <button @click="doCheckIn(r.id)" :disabled="checkingIn" class="text-green-600 hover:text-green-700 text-xs">签到</button>
                       </template>
                       <template v-else-if="r.checkInType === 'scheduled'">
-                        <span class="text-green-600 text-xs">已签到<br>{{ r.checkInTime }}</span>
+                        <span class="text-green-600 text-xs">已预约签到<br>{{ r.checkInTime }}</span>
                       </template>
                       <template v-else-if="r.checkInType === 'walkin'">
                         <span class="text-[#F5A623] text-xs">已临时签到<br>{{ r.checkInTime }}</span>
                       </template>
                       <template v-else-if="r.checkInType === 'applied'">
                         <span class="text-blue-500 text-xs">待审批<br>{{ r.checkInTime }}</span>
+                      </template>
+                      <template v-else-if="r.checkInType === 'applied_scheduled'">
+                        <span class="text-blue-500 text-xs">预约签到申请<br>{{ r.checkInTime }}</span>
+                      </template>
+                      <template v-else-if="r.checkInType === 'applied_walkin'">
+                        <span class="text-blue-500 text-xs">临时签到申请<br>{{ r.checkInTime }}</span>
                       </template>
                       <template v-else-if="r.checkInType === 'approved'">
                         <span class="text-green-600 text-xs">审批通过<br>{{ r.checkInTime }}</span>
@@ -521,7 +527,7 @@
                     <td class="px-5 py-3.5">
                       <span :class="[
                         'inline-block px-2.5 py-1 rounded-full text-xs font-medium',
-                        r.checkInTypeLabel === '预约签到' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-500'
+                        r.checkInTypeLabel === '预约签到' || r.checkInTypeLabel === '预约签到申请' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-500'
                       ]">
                         {{ r.checkInTypeLabel }}
                       </span>
@@ -803,6 +809,17 @@
     </div>
   </div>
 
+  <div v-if="showConfirmModal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-[200]">
+    <div class="bg-white rounded-2xl p-6 w-80">
+      <h3 class="text-lg font-bold text-gray-700 mb-2">确认操作</h3>
+      <p class="text-gray-500 text-sm mb-4">{{ confirmModalMessage }}</p>
+      <div class="flex gap-3">
+        <button @click="cancelConfirmModal" class="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-all">取消</button>
+        <button @click="confirmConfirmModal" class="flex-1 py-2.5 rounded-xl bg-[#2D8A4E] text-white font-medium text-sm hover:bg-[#237a3f] transition-all">确认</button>
+      </div>
+    </div>
+  </div>
+
     </template>
 
 <script setup lang="ts">
@@ -891,6 +908,30 @@ function cancelPasswordModal() {
   showPasswordModal.value = false
   pendingPasswordResolve?.('')
   pendingPasswordResolve = null
+}
+
+let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null
+const showConfirmModal = ref(false)
+const confirmModalMessage = ref('')
+
+function confirmDialog(message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    confirmModalMessage.value = message
+    showConfirmModal.value = true
+    pendingConfirmResolve = resolve
+  })
+}
+
+function confirmConfirmModal() {
+  showConfirmModal.value = false
+  pendingConfirmResolve?.(true)
+  pendingConfirmResolve = null
+}
+
+function cancelConfirmModal() {
+  showConfirmModal.value = false
+  pendingConfirmResolve?.(false)
+  pendingConfirmResolve = null
 }
 
 const showNotifSettings = ref(false)
@@ -1379,7 +1420,7 @@ async function importMembers(e: any) {
 }
 
 async function deleteMember(id: number) {
-  if (!confirm('确定删除该成员吗？')) return
+  if (!(await confirmDialog('确定删除该成员吗？'))) return
   try {
     const res = await fetch('/api/members/delete', {
       method: 'POST',
@@ -1444,7 +1485,7 @@ async function saveMember() {
 }
 
 async function doCheckIn(id: number) {
-  if (!confirm('确认该学员已到场签到？')) return
+  if (!(await confirmDialog('确认该学员已到场签到？'))) return
   checkingIn.value = true
   try {
     const res = await fetch('/api/check-in', {
@@ -1631,7 +1672,7 @@ async function fetchPendingCheckins() {
   try {
     const res = await fetch(`/api/registrations?week=${selectedWeek.value}`)
     const data = await res.json()
-    pendingCheckins.value = (data.registrations || []).filter((r: any) => r.checkInType === 'applied')
+    pendingCheckins.value = (data.registrations || []).filter((r: any) => r.checkInType === 'applied' || r.checkInType === 'applied_scheduled' || r.checkInType === 'applied_walkin')
   } catch {
     showNotification('获取待审批列表失败', 'error')
   } finally {
@@ -1791,7 +1832,7 @@ async function saveNotificationText() {
 
 async function clearRegistrations(scope: 'all' | 'week') {
   const label = scope === 'all' ? '本年' : '本周'
-  if (!confirm(`确定清空${label}报名记录吗？此操作不可恢复！`)) return
+  if (!(await confirmDialog(`确定清空${label}报名记录吗？此操作不可恢复！`))) return
   const pwd = await requestPassword()
   if (!pwd.trim()) return
   clearingRegistrations.value = true

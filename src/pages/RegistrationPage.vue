@@ -252,22 +252,29 @@
                 :key="result.classDay"
                 class="rounded-xl px-4 py-2.5 text-xs"
                 :class="{
-                  'bg-blue-50 border border-blue-200 text-blue-600': result.status === 'applied',
-                  'bg-green-50 border border-green-200 text-green-600': result.status === 'approved' || result.status === 'walkin',
+                  'bg-blue-50 border border-blue-200 text-blue-600': result.status === 'applied' || result.status === 'applied_scheduled' || result.status === 'applied_walkin',
+                  'bg-green-50 border border-green-200 text-green-600': result.status === 'approved' || result.status === 'scheduled',
+                  'bg-orange-50 border border-orange-200 text-orange-600': result.status === 'walkin',
                   'bg-red-50 border border-red-200 text-red-500': result.status === 'rejected',
                 }"
               >
                 <template v-if="result.status === 'applied'">
                   ⏳ {{ result.classDay === 'tuesday' ? '周二' : '周三' }}签到申请已提交，等待审批
                 </template>
-                <template v-else-if="result.status === 'approved'">
-                  ✓ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 签到成功
+                <template v-else-if="result.status === 'applied_scheduled'">
+                  ⏳ {{ result.classDay === 'tuesday' ? '周二' : '周三' }}预约签到申请已提交，等待审批
+                </template>
+                <template v-else-if="result.status === 'applied_walkin'">
+                  ⏳ {{ result.classDay === 'tuesday' ? '周二' : '周三' }}临时签到申请已提交，等待审批
+                </template>
+                <template v-else-if="result.status === 'approved' || result.status === 'scheduled'">
+                  ✓ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 已预约签到
                 </template>
                 <template v-else-if="result.status === 'rejected'">
                   ✗ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 签到失败，原因为{{ result.rejectReason }}
                 </template>
                 <template v-else-if="result.status === 'walkin'">
-                  ✓ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 签到成功（临时）
+                  ✓ 您{{ result.classDay === 'tuesday' ? '周二' : '周三' }}于北京时间 {{ result.checkInTime }} 已临时签到
                 </template>
               </div>
             </div>

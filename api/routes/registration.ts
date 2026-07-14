@@ -301,34 +301,38 @@ router.get('/registrations', async (req: Request, res: Response): Promise<void> 
     reject_reason: string | null
   }>
 
-  const enriched = await Promise.all(registrations.map(async r => {
+  const enriched = registrations.map(r => {
     let checkInTypeLabel = ''
     if (r.check_in_type === 'applied') {
-      const hasScheduled = await db.prepare(
-        'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
-      ).get(r.week_key, r.name, r.class_day) as { cnt: number }
-      checkInTypeLabel = hasScheduled.cnt > 0 ? '预约签到' : '临时签到'
+      checkInTypeLabel = '申请签到'
+    } else if (r.check_in_type === 'applied_scheduled') {
+      checkInTypeLabel = '预约签到申请'
+    } else if (r.check_in_type === 'applied_walkin') {
+      checkInTypeLabel = '临时签到申请'
+    } else if (r.check_in_type === 'scheduled') {
+      checkInTypeLabel = '已预约签到'
     } else if (r.check_in_type === 'walkin') {
-      checkInTypeLabel = '临时签到'
+      checkInTypeLabel = '已临时签到'
     } else if (r.check_in_type === 'approved') {
       checkInTypeLabel = '已签到'
     } else if (r.check_in_type === 'rejected') {
       checkInTypeLabel = '已驳回'
     }
+    const isWalkIn = r.check_in_type === 'walkin' || r.check_in_type === 'applied_walkin'
     return {
       id: r.id,
       name: r.name,
       classDay: r.class_day,
       classDate: r.class_date,
       source: r.source,
-      createdAt: r.created_at,
+      createdAt: isWalkIn ? '' : r.created_at,
       weekKey: r.week_key,
       checkInType: r.check_in_type || null,
       checkInTime: r.check_in_time || null,
       rejectReason: r.reject_reason || null,
       checkInTypeLabel,
     }
-  }))
+  })
 
   res.json({ registrations: enriched })
 })
@@ -377,6 +381,8 @@ router.post('/registrations/import', async (req: Request, res: Response): Promis
 
   const checkInMapRev: Record<string, string> = {
     '预约签到': 'scheduled', '临时签到': 'walkin', '申请签到': 'applied',
+    '已预约签到': 'scheduled', '已临时签到': 'walkin',
+    '预约签到申请': 'applied_scheduled', '临时签到申请': 'applied_walkin',
     '审批通过': 'approved', '审批驳回': 'rejected',
   }
 
@@ -473,8 +479,8 @@ router.post('/walk-in', async (req: Request, res: Response): Promise<void> => {
   const timeStr = getBeijingTimeString()
 
   await db.prepare(
-    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name.trim(), '', classDay, classDate, source, weekKey, 'walkin', timeStr, timeStr)
+    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(name.trim(), '', classDay, classDate, source, weekKey, 'walkin', timeStr)
 
   res.json({ success: true, message: '临时签到成功', checkInTime: timeStr })
 })
@@ -499,11 +505,11 @@ router.post('/apply-checkin', async (req: Request, res: Response): Promise<void>
   ).get(weekKey, name.trim(), classDay) as { id: number; check_in_type: string | null } | undefined
 
   if (existing) {
-    if (existing.check_in_type === 'applied') {
+    if (existing.check_in_type === 'applied' || existing.check_in_type === 'applied_scheduled' || existing.check_in_type === 'applied_walkin') {
       res.status(400).json({ success: false, message: '您已提交签到申请，请等待审批' })
       return
     }
-    if (existing.check_in_type === 'approved') {
+    if (existing.check_in_type === 'approved' || existing.check_in_type === 'scheduled') {
       res.status(400).json({ success: false, message: '您已签到成功，无需重复申请' })
       return
     }
@@ -512,8 +518,9 @@ router.post('/apply-checkin', async (req: Request, res: Response): Promise<void>
       return
     }
     const timeStr = getBeijingTimeString()
+    // 有报名记录 → 标记为预约签到申请
     await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ? WHERE id = ?')
-      .run('applied', timeStr, existing.id)
+      .run('applied_scheduled', timeStr, existing.id)
     res.json({ success: true, message: '签到申请已提交，请等待管理员审批' })
     return
   }
@@ -521,9 +528,10 @@ router.post('/apply-checkin', async (req: Request, res: Response): Promise<void>
   const classDate = getClassDate(classDay, weekKey)
   const timeStr = getBeijingTimeString()
 
+  // 无报名记录 → 标记为临时签到申请（报名时间留空）
   await db.prepare(
-    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name.trim(), '', classDay, classDate, member.source, weekKey, 'applied', timeStr, timeStr)
+    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(name.trim(), '', classDay, classDate, member.source, weekKey, 'applied_walkin', timeStr)
 
   res.json({ success: true, message: '签到申请已提交，请等待管理员审批' })
 })
@@ -538,17 +546,28 @@ router.post('/checkin-result', async (req: Request, res: Response): Promise<void
   const weekKey = getWeekKey()
 
   const records = await db.prepare(
-    'SELECT class_day, check_in_type, check_in_time, reject_reason FROM registrations WHERE week_key = ? AND name = ? AND check_in_type IS NOT NULL AND check_in_type IN (?, ?, ?, ?) ORDER BY class_day'
-  ).all(weekKey, name.trim(), 'applied', 'approved', 'rejected', 'walkin') as Array<{
+    'SELECT class_day, check_in_type, check_in_time, reject_reason FROM registrations WHERE week_key = ? AND name = ? AND check_in_type IS NOT NULL AND check_in_type IN (?, ?, ?, ?, ?, ?) ORDER BY class_day'
+  ).all(weekKey, name.trim(), 'applied', 'applied_scheduled', 'applied_walkin', 'approved', 'rejected', 'walkin') as Array<{
     class_day: string
     check_in_type: string
     check_in_time: string | null
     reject_reason: string | null
   }>
 
+  const statusLabelMap: Record<string, string> = {
+    applied: '申请签到',
+    applied_scheduled: '预约签到申请',
+    applied_walkin: '临时签到申请',
+    scheduled: '已预约签到',
+    walkin: '已临时签到',
+    approved: '已签到',
+    rejected: '已驳回',
+  }
+
   const results = records.map(r => ({
     classDay: r.class_day,
     status: r.check_in_type,
+    statusLabel: statusLabelMap[r.check_in_type] || r.check_in_type,
     checkInTime: r.check_in_time || '',
     rejectReason: r.reject_reason || '',
   }))
@@ -578,7 +597,7 @@ router.post('/checkin-review', async (req: Request, res: Response): Promise<void
     res.status(404).json({ success: false, message: '报名记录不存在' })
     return
   }
-  if (registration.check_in_type !== 'applied') {
+  if (registration.check_in_type !== 'applied' && registration.check_in_type !== 'applied_scheduled' && registration.check_in_type !== 'applied_walkin') {
     res.status(400).json({ success: false, message: '该记录不在待审批状态' })
     return
   }
@@ -586,16 +605,23 @@ router.post('/checkin-review', async (req: Request, res: Response): Promise<void
   const timeStr = getBeijingTimeString()
 
   if (action === 'approve') {
-    const hasScheduled = await db.prepare(
-      'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
-    ).get(registration.week_key, registration.name, registration.class_day) as { cnt: number }
-
-    if (hasScheduled.cnt > 0) {
-      await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('approved', timeStr, registrationId)
+    // 根据申请类型直接判断：预约签到申请→scheduled，临时签到申请→walkin
+    let approvedType: string
+    if (registration.check_in_type === 'applied_scheduled') {
+      approvedType = 'scheduled'
+    } else if (registration.check_in_type === 'applied_walkin') {
+      approvedType = 'walkin'
     } else {
-      await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run('walkin', timeStr, registrationId)
+      // 兼容旧的 applied 类型：根据是否有报名记录判断
+      const hasScheduled = await db.prepare(
+        'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
+      ).get(registration.week_key, registration.name, registration.class_day) as { cnt: number }
+      approvedType = hasScheduled.cnt > 0 ? 'scheduled' : 'walkin'
     }
-    res.json({ success: true, message: '签到审批通过', checkInTime: timeStr })
+
+    await db.prepare('UPDATE registrations SET check_in_type = ?, check_in_time = ?, reject_reason = NULL WHERE id = ?').run(approvedType, timeStr, registrationId)
+    const label = approvedType === 'scheduled' ? '预约签到' : '临时签到'
+    res.json({ success: true, message: `签到审批通过（${label}）`, checkInTime: timeStr, checkInType: approvedType })
   } else {
     await db.prepare('UPDATE registrations SET check_in_type = ?, reject_reason = ? WHERE id = ?').run('rejected', reason.trim(), registrationId)
     res.json({ success: true, message: '已驳回签到申请' })
@@ -844,17 +870,20 @@ router.post('/export-all', async (req: Request, res: Response): Promise<void> =>
   }
 
   const checkInMap: Record<string, string> = {
-    scheduled: '预约签到',
-    walkin: '临时签到',
+    scheduled: '已预约签到',
+    walkin: '已临时签到',
     applied: '申请签到',
+    applied_scheduled: '预约签到申请',
+    applied_walkin: '临时签到申请',
     approved: '审批通过',
     rejected: '审批驳回',
   }
 
   const header = '姓名,来自,上课日,上课日期,报名日期,所属周,签到类型,签到时间'
-  const rows = registrations.map(r =>
-    `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${r.created_at},${r.week_key},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
-  ).join('\n')
+  const rows = registrations.map(r => {
+    const isWalkIn = r.check_in_type === 'walkin' || r.check_in_type === 'applied_walkin'
+    return `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${isWalkIn ? '' : r.created_at},${r.week_key},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
+  }).join('\n')
 
   const bom = '\uFEFF'
   const csv = `${bom}${header}\n${rows}`
@@ -888,17 +917,20 @@ router.get('/export', async (req: Request, res: Response): Promise<void> => {
   }
 
   const checkInMap: Record<string, string> = {
-    scheduled: '预约签到',
-    walkin: '临时签到',
+    scheduled: '已预约签到',
+    walkin: '已临时签到',
     applied: '申请签到',
+    applied_scheduled: '预约签到申请',
+    applied_walkin: '临时签到申请',
     approved: '审批通过',
     rejected: '审批驳回',
   }
 
   const header = '姓名,来自,上课日,上课日期,报名时间,签到类型,签到时间'
-  const rows = registrations.map(r =>
-    `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${r.created_at},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
-  ).join('\n')
+  const rows = registrations.map(r => {
+    const isWalkIn = r.check_in_type === 'walkin' || r.check_in_type === 'applied_walkin'
+    return `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${isWalkIn ? '' : r.created_at},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
+  }).join('\n')
 
   const bom = '\uFEFF'
   const csv = `${bom}${header}\n${rows}`
