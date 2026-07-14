@@ -589,6 +589,9 @@ function updateCloseCountdown() {
 async function fetchStatus() {
   try {
     const res = await fetch('/api/status')
+    if (!res.ok) {
+      return
+    }
     const data = await res.json()
     status.tuesday = data.tuesday
     status.wednesday = data.wednesday
