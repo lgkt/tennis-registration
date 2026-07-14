@@ -146,7 +146,7 @@
                 <div class="relative">
                   <input
                     v-model="form.name"
-                    @input="checkMember"
+                    @input="onNameInput"
                     type="text"
                     placeholder="请输入姓名"
                     :class="[
@@ -342,6 +342,7 @@ const maxTuesday = ref(10)
 const maxWednesday = ref(10)
 const multiDayEnabled = ref(false)
 const beijingTimeStr = ref('')
+const pageReady = ref(false)
 const notificationText = ref('')
 const forceOpen = ref(false)
 const forceClose = ref(false)
@@ -435,9 +436,17 @@ function toggleDay(day: string) {
   }
 }
 
-async function checkMember() {
+function onNameInput() {
+  checkMember()
+}
+
+async function checkMember(force = false) {
   if (!form.name.trim()) {
     memberStatus.value = null
+    return
+  }
+  // 页面未就绪时，如果不是强制调用，则延迟到就绪后执行
+  if (!pageReady.value && !force) {
     return
   }
   if (memberAbortController) memberAbortController.abort()
@@ -453,6 +462,11 @@ async function checkMember() {
         signal: memberAbortController.signal,
       })
       if (!res.ok) {
+        // 服务初始化中，不显示错误，静默跳过
+        if (res.status === 500 || res.status === 503) {
+          memberStatus.value = null
+          return
+        }
         memberStatus.value = { isValid: false, message: '校验服务异常，请稍后重试' }
         return
       }
@@ -624,8 +638,10 @@ async function fetchStatus() {
       closeCountdownTimer = setInterval(updateCloseCountdown, 1000)
     }
 
+    // 标记页面就绪，然后强制校验成员
+    pageReady.value = true
     if (form.name.trim()) {
-      checkMember()
+      checkMember(true)
     }
   } catch {
   } finally {
