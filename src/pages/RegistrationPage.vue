@@ -343,6 +343,7 @@ const maxWednesday = ref(10)
 const multiDayEnabled = ref(false)
 const beijingTimeStr = ref('')
 const pageReady = ref(false)
+const statusFetched = ref(false)
 const notificationText = ref('')
 const forceOpen = ref(false)
 const forceClose = ref(false)
@@ -351,6 +352,9 @@ const forceOpenReason = ref('')
 const cancellations = reactive<Record<string, string>>({})
 const checkinResults = ref<any[]>([])
 const showCheckinModal = ref(false)
+let memberRetryTimer: ReturnType<typeof setTimeout> | null = null
+let memberRetryCount = 0
+const MAX_MEMBER_RETRIES = 5
 
 function getBeijingDay(): string {
   const now = new Date()
@@ -440,17 +444,40 @@ function onNameInput() {
   checkMember()
 }
 
+function isTransientError(status: number): boolean {
+  return status >= 500 && status <= 599
+}
+
+function scheduleMemberRetry() {
+  if (memberRetryCount >= MAX_MEMBER_RETRIES) return
+  if (memberRetryTimer) clearTimeout(memberRetryTimer)
+  memberRetryCount++
+  const delay = Math.min(1000 * Math.pow(2, memberRetryCount - 1), 8000)
+  memberRetryTimer = setTimeout(() => {
+    checkMember(true)
+  }, delay)
+}
+
+function clearMemberRetry() {
+  if (memberRetryTimer) {
+    clearTimeout(memberRetryTimer)
+    memberRetryTimer = null
+  }
+  memberRetryCount = 0
+}
+
 async function checkMember(force = false) {
   if (!form.name.trim()) {
     memberStatus.value = null
+    clearMemberRetry()
     return
   }
-  // 页面未就绪时，如果不是强制调用，则延迟到就绪后执行
-  if (!pageReady.value && !force) {
+  if (!statusFetched.value && !force) {
     return
   }
   if (memberAbortController) memberAbortController.abort()
   if (debounceTimer) clearTimeout(debounceTimer)
+  clearMemberRetry()
   debounceTimer = setTimeout(async () => {
     memberAbortController = new AbortController()
     checkingMember.value = true
@@ -462,24 +489,31 @@ async function checkMember(force = false) {
         signal: memberAbortController.signal,
       })
       if (!res.ok) {
-        // 服务初始化中，不显示错误，静默跳过
-        if (res.status === 500 || res.status === 503) {
+        if (isTransientError(res.status)) {
           memberStatus.value = null
+          checkingMember.value = false
+          scheduleMemberRetry()
           return
         }
         memberStatus.value = { isValid: false, message: '校验服务异常，请稍后重试' }
         return
       }
       memberStatus.value = await res.json()
+      memberRetryCount = 0
       if (memberStatus.value?.isValid) {
         fetchCheckinResults()
       }
     } catch (e: any) {
       if (e.name === 'AbortError') return
-      memberStatus.value = { isValid: false, message: '网络错误，请检查网络后重试' }
-    } finally {
+      memberStatus.value = null
       checkingMember.value = false
-      memberAbortController = null
+      scheduleMemberRetry()
+      return
+    } finally {
+      if (memberStatus.value !== null) {
+        checkingMember.value = false
+        memberAbortController = null
+      }
     }
   }, 300)
 }
@@ -600,10 +634,32 @@ function updateCloseCountdown() {
   closeCountdown.value = parts.join(' ')
 }
 
+let statusRetryCount = 0
+const MAX_STATUS_RETRIES = 8
+let statusRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleStatusRetry() {
+  if (statusRetryCount >= MAX_STATUS_RETRIES) {
+    loading.value = false
+    statusFetched.value = true
+    if (form.name.trim()) {
+      checkMember(true)
+    }
+    return
+  }
+  if (statusRetryTimer) clearTimeout(statusRetryTimer)
+  statusRetryCount++
+  const delay = Math.min(1000 * Math.pow(2, statusRetryCount - 1), 10000)
+  statusRetryTimer = setTimeout(() => {
+    fetchStatus()
+  }, delay)
+}
+
 async function fetchStatus() {
   try {
     const res = await fetch('/api/status')
     if (!res.ok) {
+      scheduleStatusRetry()
       return
     }
     const data = await res.json()
@@ -638,14 +694,19 @@ async function fetchStatus() {
       closeCountdownTimer = setInterval(updateCloseCountdown, 1000)
     }
 
-    // 标记页面就绪，然后强制校验成员
     pageReady.value = true
+    statusFetched.value = true
+    statusRetryCount = 0
     if (form.name.trim()) {
       checkMember(true)
     }
   } catch {
+    scheduleStatusRetry()
+    return
   } finally {
-    loading.value = false
+    if (pageReady.value) {
+      loading.value = false
+    }
   }
 }
 
@@ -719,6 +780,8 @@ onUnmounted(() => {
   if (countdownTimer) clearInterval(countdownTimer)
   if (closeCountdownTimer) clearInterval(closeCountdownTimer)
   if (debounceTimer) clearTimeout(debounceTimer)
+  if (memberRetryTimer) clearTimeout(memberRetryTimer)
+  if (statusRetryTimer) clearTimeout(statusRetryTimer)
   if (memberAbortController) memberAbortController.abort()
 })
 </script>
