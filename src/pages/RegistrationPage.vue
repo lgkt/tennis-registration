@@ -407,7 +407,6 @@ function loadLastForm() {
       const data = JSON.parse(saved)
       form.name = data.name || ''
       form.classDays = data.classDays ? [...data.classDays] : (data.classDay ? [data.classDay] : [])
-      if (form.name) checkMember()
     }
   } catch {
   }
@@ -620,6 +619,10 @@ async function fetchStatus() {
       updateCloseCountdown()
       if (closeCountdownTimer) clearInterval(closeCountdownTimer)
       closeCountdownTimer = setInterval(updateCloseCountdown, 1000)
+    }
+
+    if (form.name.trim()) {
+      checkMember()
     }
   } catch {
   } finally {
