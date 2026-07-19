@@ -1237,7 +1237,7 @@ function generateStatWeeks() {
 
     const startOfYear = new Date(d.getFullYear(), 0, 1)
     const days = Math.floor((d.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000))
-    const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7)
+    const weekNum = Math.floor((days + (startOfYear.getDay() + 6) % 7) / 7) + 1
     const key = `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
 
     if (seen.has(key)) continue
@@ -1264,7 +1264,7 @@ function getCurrentWeekKey(): string {
   const beijing = new Date(now.getTime() + (offset + 480) * 60 * 1000)
   const startOfYear = new Date(beijing.getFullYear(), 0, 1)
   const days = Math.floor((beijing.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000))
-  const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7)
+  const weekNum = Math.floor((days + (startOfYear.getDay() + 6) % 7) / 7) + 1
   return `${beijing.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
 }
 

@@ -384,7 +384,8 @@ export function getWeekKey(date: Date = new Date()): string {
   const now = new Date(beijingTime);
   const startOfYear = new Date(now.getFullYear(), 0, 1);
   const days = Math.floor((now.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
-  const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7);
+  // 周一为一周开始，周日归到当前周（旧算法把周日算到下一周）
+  const weekNum = Math.floor((days + (startOfYear.getDay() + 6) % 7) / 7) + 1;
   return `${now.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }
 
