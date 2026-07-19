@@ -377,7 +377,11 @@ export function getBeijingTimeString(): string {
 }
 
 export function getWeekKey(date: Date = new Date()): string {
-  const now = new Date(date);
+  // 转换为北京时间后再计算周次，避免 UTC 导致周一提前切换
+  const beijingOffset = 8 * 60;
+  const localOffset = date.getTimezoneOffset();
+  const beijingTime = new Date(date.getTime() + (localOffset + beijingOffset) * 60 * 1000);
+  const now = new Date(beijingTime);
   const startOfYear = new Date(now.getFullYear(), 0, 1);
   const days = Math.floor((now.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
   const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7);
