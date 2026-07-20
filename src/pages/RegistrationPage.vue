@@ -380,6 +380,7 @@ let closeCountdownTimer: ReturnType<typeof setInterval> | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let memberAbortController: AbortController | null = null
 let clockTimer: ReturnType<typeof setInterval> | null = null
+let statusPollTimer: ReturnType<typeof setInterval> | null = null
 
 interface StatusData {
   tuesday: number
@@ -780,6 +781,10 @@ onMounted(() => {
   }, 1000)
   loadLastForm()
   fetchStatus()
+  // 每 10 秒轻量轮询报名人数
+  statusPollTimer = setInterval(pollStatus, 10000)
+  // 窗口重新可见时立即刷新一次
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onUnmounted(() => {
@@ -789,6 +794,34 @@ onUnmounted(() => {
   if (debounceTimer) clearTimeout(debounceTimer)
   if (memberRetryTimer) clearTimeout(memberRetryTimer)
   if (statusRetryTimer) clearTimeout(statusRetryTimer)
+  if (statusPollTimer) clearInterval(statusPollTimer)
   if (memberAbortController) memberAbortController.abort()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
+
+// 轻量轮询：只更新人数/上限/取消状态，不触发其他副作用
+async function pollStatus() {
+  try {
+    const res = await fetch('/api/status')
+    if (!res.ok) return
+    const data = await res.json()
+    status.tuesday = data.tuesday
+    status.wednesday = data.wednesday
+    maxTuesday.value = data.maxTuesday || 10
+    maxWednesday.value = data.maxWednesday || 10
+    if (data.cancellations) {
+      Object.keys(data.cancellations).forEach(k => {
+        cancellations[k] = data.cancellations[k]
+      })
+    }
+  } catch {
+    // 静默失败，下次轮询再试
+  }
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    pollStatus()
+  }
+}
 </script>
