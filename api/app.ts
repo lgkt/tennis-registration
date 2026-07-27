@@ -46,14 +46,33 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
  */
 app.use('/api', registrationRoutes)
 
+/**
+ * Liveness 探针：只检查进程是否存活，永远返回 200
+ * Railway healthcheck 应该用这个，避免数据库波动触发容器被杀
+ */
 app.use(
   '/api/health',
+  (req: Request, res: Response): void => {
+    res.status(200).json({
+      success: true,
+      message: 'ok',
+      database: 'unknown',
+    })
+  },
+)
+
+/**
+ * Readiness 探针：检查数据库是否就绪，用于判断是否能处理请求
+ * 未就绪时返回 503，但不会触发容器重启
+ */
+app.use(
+  '/api/ready',
   async (req: Request, res: Response): Promise<void> => {
     try {
       await waitDbReady()
       res.status(200).json({
         success: true,
-        message: 'ok',
+        message: 'ready',
         database: 'connected',
       })
     } catch (err) {
