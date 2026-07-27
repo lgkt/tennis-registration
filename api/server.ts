@@ -7,6 +7,18 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Local:   http://localhost:${PORT}/`)
 })
 
+// 全局兜底：未捕获的 Promise rejection 不再杀进程，仅记录日志
+// 防止 pg-pool / 其他异步错误导致容器无限重启
+process.on('unhandledRejection', (reason: unknown) => {
+  const msg = reason instanceof Error ? reason.message : String(reason)
+  console.error('UnhandledRejection (ignored, process kept alive):', msg)
+})
+
+// 兜底捕获同步异常，避免进程崩溃
+process.on('uncaughtException', (err: Error) => {
+  console.error('UncaughtException (ignored, process kept alive):', err.message)
+})
+
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received')
   server.close(() => {

@@ -24,6 +24,7 @@ export interface Db {
 
 let dbInstance: Db | null = null
 let initPromise: Promise<void> | null = null
+let initRejected = false
 
 const tableConflictColumns: Record<string, string[]> = {
   settings: ['key'],
@@ -139,29 +140,60 @@ class PgStatement implements Statement {
     this.sql = convertPlaceholders(convertSqlForPg(sql))
   }
 
+  // 查询级重试：遇到 57P03（数据库启动中）或连接错误时自动等待重试，避免单次查询失败导致 500 或进程崩溃
+  private async queryWithRetry<T>(fn: () => Promise<T>, maxRetries = 5, baseDelay = 800): Promise<T> {
+    let lastError: unknown
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await fn()
+      } catch (err) {
+        lastError = err
+        const msg = err instanceof Error ? err.message : String(err)
+        // 57P03: 数据库启动中；连接类错误也重试
+        const shouldRetry = msg.includes('the database system is starting up')
+          || msg.includes('Connection terminated')
+          || msg.includes('ECONNRESET')
+          || msg.includes('connect ECONNREFUSED')
+          || msg.includes('timeout')
+        if (shouldRetry && i < maxRetries - 1) {
+          await new Promise(r => setTimeout(r, baseDelay * (i + 1)))
+          continue
+        }
+        throw err
+      }
+    }
+    throw lastError
+  }
+
   async get(...params: any[]): Promise<any> {
-    const result = await this.pool.query(this.sql, params)
-    return result.rows[0]
+    return this.queryWithRetry(async () => {
+      const result = await this.pool.query(this.sql, params)
+      return result.rows[0]
+    })
   }
 
   async all(...params: any[]): Promise<any[]> {
-    const result = await this.pool.query(this.sql, params)
-    return result.rows
+    return this.queryWithRetry(async () => {
+      const result = await this.pool.query(this.sql, params)
+      return result.rows
+    })
   }
 
   async run(...params: any[]): Promise<{ lastInsertRowid?: number; changes?: number }> {
-    const isInsert = /INSERT/i.test(this.sql)
-    let sql = this.sql
-    if (isInsert) {
-      const tableName = extractTableName(sql)
-      if (tableName && ['registrations', 'members', 'class_cancellations'].includes(tableName.toLowerCase())) {
-        sql += ' RETURNING id'
+    return this.queryWithRetry(async () => {
+      const isInsert = /INSERT/i.test(this.sql)
+      let sql = this.sql
+      if (isInsert) {
+        const tableName = extractTableName(sql)
+        if (tableName && ['registrations', 'members', 'class_cancellations'].includes(tableName.toLowerCase())) {
+          sql += ' RETURNING id'
+        }
       }
-    }
-    const result = await this.pool.query(sql, params)
-    const changes = result.rowCount || 0
-    const lastInsertRowid = result.rows[0]?.id
-    return { lastInsertRowid, changes }
+      const result = await this.pool.query(sql, params)
+      const changes = result.rowCount || 0
+      const lastInsertRowid = result.rows[0]?.id
+      return { lastInsertRowid, changes }
+    })
   }
 }
 
@@ -169,9 +201,19 @@ class PgDb implements Db {
   pool: pg.Pool
 
   constructor(connectionString: string) {
-    this.pool = new pg.Pool({ 
+    this.pool = new pg.Pool({
       connectionString,
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
+      // 连接池配置：提高容错性
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    })
+
+    // 关键：pg-pool 在空闲连接被服务端关闭时会抛 'error' 事件
+    // 如果没有监听器，Node 会将其作为 unhandledError 杀掉进程
+    this.pool.on('error', (err: Error) => {
+      console.error('PG pool idle connection error (ignored):', err.message)
     })
   }
 
@@ -199,6 +241,11 @@ export function getDb(): Db {
 }
 
 export function waitDbReady(): Promise<void> {
+  // 如果上一次初始化失败了，重置状态允许下次请求重新初始化（dbInstance 保留，pool 仍可复用）
+  if (initPromise && initRejected) {
+    initRejected = false
+    initPromise = initDb()
+  }
   getDb()
   return initPromise!
 }
@@ -227,11 +274,12 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries: number = 10
 
 async function initDb() {
   const db = getDb()
-  
+
   if (isPostgres()) {
-    await retryWithBackoff(async () => {
-      await db.exec('SELECT 1')
-    })
+    try {
+      await retryWithBackoff(async () => {
+        await db.exec('SELECT 1')
+      })
 
     await db.exec(`
       CREATE TABLE IF NOT EXISTS registrations (
@@ -290,6 +338,10 @@ async function initDb() {
         UNIQUE(week_key, class_day)
       );
     `)
+    } catch (err) {
+      initRejected = true
+      throw err
+    }
   } else {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS registrations (
