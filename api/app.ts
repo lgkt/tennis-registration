@@ -21,33 +21,9 @@ app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
-app.use(async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    await waitDbReady()
-    next()
-  } catch (err) {
-    console.error('Database initialization error:', err)
-    res.status(500).json({ success: false, error: 'Database initialization failed', details: err instanceof Error ? err.message : String(err) })
-  }
-})
-
-/**
- * Disable caching for all API responses
- */
-app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
-  res.setHeader('Pragma', 'no-cache')
-  res.setHeader('Expires', '0')
-  next()
-})
-
-/**
- * API Routes
- */
-app.use('/api', registrationRoutes)
-
 /**
  * Liveness 探针：只检查进程是否存活，永远返回 200
+ * 必须注册在全局 DB 中间件之前，否则 DB 没就绪时会被拦截返回 500
  * Railway healthcheck 应该用这个，避免数据库波动触发容器被杀
  */
 app.use(
@@ -84,6 +60,35 @@ app.use(
     }
   },
 )
+
+/**
+ * 全局中间件：等待数据库就绪后再处理其他请求
+ * 注册在 /api/health 和 /api/ready 之后，确保健康检查不被阻塞
+ */
+app.use(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await waitDbReady()
+    next()
+  } catch (err) {
+    console.error('Database initialization error:', err)
+    res.status(500).json({ success: false, error: 'Database initialization failed', details: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+/**
+ * Disable caching for all API responses
+ */
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+  res.setHeader('Pragma', 'no-cache')
+  res.setHeader('Expires', '0')
+  next()
+})
+
+/**
+ * API Routes
+ */
+app.use('/api', registrationRoutes)
 
 /**
  * Serve frontend static files with no-cache
