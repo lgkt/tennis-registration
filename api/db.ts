@@ -478,16 +478,6 @@ async function initDb() {
     }
   }
 
-  const sourceMigration: Array<[string, string]> = [
-    ['CNCC', '1'],
-    ['CFID', '2'],
-    ['SQQ', '3'],
-  ]
-  for (const [oldVal, newVal] of sourceMigration) {
-    await db.prepare('UPDATE members SET source = ? WHERE UPPER(source) = ?').run(newVal, oldVal)
-    await db.prepare('UPDATE registrations SET source = ? WHERE UPPER(source) = ?').run(newVal, oldVal)
-  }
-
   // 姓名加密迁移（幂等，每次启动执行）：
   // 1) 先补齐 name_hash/phone_hash（无论是否配置密钥，查询与去重都依赖 hash 列）
   // 2) 配置了 NAME_ENCRYPTION_KEY 时，把存量明文加密为 enc:v1: 格式；未配置时保持明文（兼容模式）

@@ -418,7 +418,7 @@ router.post('/registrations/import', async (req: Request, res: Response): Promis
       continue
     }
 
-    const finalSource = source || member.source
+    const finalSource = ['1', '2', '3'].includes(source) ? source : member.source
     const classDate = getClassDate(mappedDay, weekKey)
 
     const exists = await db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name_hash = ? AND class_day = ?').get(weekKey, fieldHash(name), mappedDay)
@@ -763,22 +763,26 @@ router.post('/members/import', async (req: Request, res: Response): Promise<void
 
   const db = getDb()
   let successCount = 0
+  let skippedCount = 0
   for (const m of data || []) {
     const name = (m.name || '').trim()
-    if (name && m.source && ['1', '2', '3'].includes(m.source)) {
+    const source = String(m.source || '').trim()
+    if (name && ['1', '2', '3'].includes(source)) {
       // name 已加密存储，按 name_hash 判重：已存在则更新来源，否则插入（导入保持明文入口，幂等不产生重复行）
       const nameHash = fieldHash(name)
       const existing = await db.prepare('SELECT id FROM members WHERE name_hash = ?').get(nameHash) as { id: number } | undefined
       if (existing) {
-        await db.prepare('UPDATE members SET source = ? WHERE id = ?').run(m.source, existing.id)
+        await db.prepare('UPDATE members SET source = ? WHERE id = ?').run(source, existing.id)
       } else {
-        await db.prepare('INSERT INTO members (name, name_hash, source) VALUES (?, ?, ?)').run(encryptField(name), nameHash, m.source)
+        await db.prepare('INSERT INTO members (name, name_hash, source) VALUES (?, ?, ?)').run(encryptField(name), nameHash, source)
       }
       successCount++
+    } else {
+      skippedCount++
     }
   }
 
-  res.json({ success: true, successCount })
+  res.json({ success: true, successCount, skippedCount })
 })
 
 router.get('/members/export-template', (req: Request, res: Response): void => {

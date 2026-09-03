@@ -1391,14 +1391,15 @@ async function importMembers(e: any) {
     csv = csv.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     const lines = csv.split('\n').filter(l => l.trim())
     const data = []
+    let skipped = 0
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(',')
-      if (cols.length >= 2) {
-        const name = cols[0].trim()
-        const source = cols[1].trim().toUpperCase()
-        if (name && ['1', '2', '3'].includes(source)) {
-          data.push({ name, source })
-        }
+      const name = cols[0].trim()
+      const source = cols.length >= 2 ? cols[1].trim() : ''
+      if (name && ['1', '2', '3'].includes(source)) {
+        data.push({ name, source })
+      } else {
+        skipped++
       }
     }
     const res = await fetch('/api/members/import', {
@@ -1408,10 +1409,14 @@ async function importMembers(e: any) {
     })
     const result = await res.json()
     if (result.success) {
-      showNotification(`成功导入 ${result.successCount} 位成员`)
+      if (skipped > 0) {
+        showNotification(`成功导入 ${result.successCount} 位成员，跳过 ${skipped} 行（姓名或来源无效）`, 'error')
+      } else {
+        showNotification(`成功导入 ${result.successCount} 位成员`)
+      }
       fetchMembers()
     } else {
-      showNotification('导入失败', 'error')
+      showNotification(result.message || '导入失败', 'error')
     }
   } catch {
     showNotification('网络错误', 'error')

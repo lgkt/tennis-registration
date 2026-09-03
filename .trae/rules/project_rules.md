@@ -30,7 +30,7 @@ cd /workspace && npx tsx api/server.ts
 
 ## 数据库表
 - `registrations`：报名记录（name, phone, class_day, class_date, source, week_key, created_at）
-- `members`：成员名单（name UNIQUE, source：CNCC/CFID/SQQ）
+- `members`：成员名单（name UNIQUE, source：1/2/3，仅接受这三个值，导入不再兼容 CNCC/CFID/SQQ 旧值）
 - `settings`：键值配置（force_open, max_tuesday, max_wednesday, multi_day_enabled）
 
 ## 核心业务规则
