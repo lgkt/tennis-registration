@@ -19,7 +19,8 @@ cd /workspace && npx tsx api/server.ts
 - 前端：Vue 3 + Vite + Tailwind CSS + Vue Router
 - 后端：Express + better-sqlite3
 - 数据库：SQLite（文件存储于 /workspace/data/registrations.db）
-- 部署：Railway（前后端一体部署）
+- 部署：用户已自建服务器自行部署（已不用 Railway）；启动 `pnpm install && npx tsx api/server.ts`，端口 3001
+- 环境变量：自部署可直接用项目根目录 `.env` 文件（api/env.ts 零依赖加载，真实环境变量优先不覆盖）；必须配置 NAME_ENCRYPTION_KEY（一经加密不可更改）
 
 ## 路由
 | 路径 | 说明 |
