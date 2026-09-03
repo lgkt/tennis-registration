@@ -339,7 +339,7 @@ router.get('/registrations', async (req: Request, res: Response): Promise<void> 
 
 router.get('/registrations/export-template', (_req: Request, res: Response): void => {
   const bom = '\uFEFF'
-  const content = bom + '姓名,手机号,上课日,来源,周次\n张三,13800000000,tuesday,CNCC,2026-W23\n李四,13900000000,wednesday,CFID,2026-W23\n王五,13700000000,tuesday,SQQ,2026-W23\n赵六,13600000000,wednesday,CNCC,2026-W23'
+  const content = bom + '姓名,手机号,上课日,来源,周次\n张三,13800000000,tuesday,1,2026-W23\n李四,13900000000,wednesday,2,2026-W23\n王五,13700000000,tuesday,3,2026-W23\n赵六,13600000000,wednesday,1,2026-W23'
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
   res.setHeader('Content-Disposition', 'attachment; filename=registration_template.csv')
   res.send(content)
@@ -469,7 +469,7 @@ router.post('/walk-in', async (req: Request, res: Response): Promise<void> => {
     res.status(403).json({ success: false, message: '口令错误' })
     return
   }
-  if (!name || !name.trim() || !source || !['CNCC', 'CFID', 'SQQ'].includes(source) || !['tuesday', 'wednesday'].includes(classDay)) {
+  if (!name || !name.trim() || !source || !['1', '2', '3'].includes(source) || !['tuesday', 'wednesday'].includes(classDay)) {
     res.status(400).json({ success: false, message: '参数错误' })
     return
   }
@@ -752,7 +752,7 @@ router.post('/members/import', async (req: Request, res: Response): Promise<void
   const db = getDb()
   let successCount = 0
   for (const m of data || []) {
-    if (m.name && m.source && ['CNCC', 'CFID', 'SQQ'].includes(m.source)) {
+    if (m.name && m.source && ['1', '2', '3'].includes(m.source)) {
       await db.prepare('INSERT OR REPLACE INTO members (name, source) VALUES (?, ?)')
         .run(m.name.trim(), m.source)
       successCount++
@@ -804,7 +804,7 @@ router.post('/members/add', async (req: Request, res: Response): Promise<void> =
     res.status(403).json({ success: false, message: '口令错误' })
     return
   }
-  if (!name || !name.trim() || !source || !['CNCC', 'CFID', 'SQQ'].includes(source)) {
+  if (!name || !name.trim() || !source || !['1', '2', '3'].includes(source)) {
     res.status(400).json({ success: false, message: '参数错误' })
     return
   }
@@ -825,7 +825,7 @@ router.post('/members/update', async (req: Request, res: Response): Promise<void
     res.status(403).json({ success: false, message: '口令错误' })
     return
   }
-  if (!id || !name || !name.trim() || !source || !['CNCC', 'CFID', 'SQQ'].includes(source)) {
+  if (!id || !name || !name.trim() || !source || !['1', '2', '3'].includes(source)) {
     res.status(400).json({ success: false, message: '参数错误' })
     return
   }

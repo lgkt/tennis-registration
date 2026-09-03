@@ -288,7 +288,7 @@ async function initDb() {
         phone VARCHAR(255) NOT NULL,
         class_day VARCHAR(20) NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
         class_date VARCHAR(50),
-        source VARCHAR(50) NOT NULL DEFAULT 'CNCC',
+        source VARCHAR(50) NOT NULL DEFAULT '1',
         created_at VARCHAR(50) NOT NULL DEFAULT NOW(),
         week_key VARCHAR(20) NOT NULL
       );
@@ -301,13 +301,13 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS members (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL UNIQUE,
-        source VARCHAR(50) NOT NULL DEFAULT 'CNCC'
+        source VARCHAR(50) NOT NULL DEFAULT '1'
       );
     `)
 
     const columnsToAdd = [
       { table: 'registrations', column: 'class_date', type: 'VARCHAR(50)' },
-      { table: 'registrations', column: 'source', type: 'VARCHAR(50)', default: "'CNCC'" },
+      { table: 'registrations', column: 'source', type: 'VARCHAR(50)', default: "'1'" },
       { table: 'registrations', column: 'check_in_type', type: 'VARCHAR(50)' },
       { table: 'registrations', column: 'check_in_time', type: 'VARCHAR(50)' },
       { table: 'registrations', column: 'reject_reason', type: 'TEXT' },
@@ -350,7 +350,7 @@ async function initDb() {
         phone TEXT NOT NULL,
         class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
         class_date TEXT,
-        source TEXT NOT NULL DEFAULT 'CNCC',
+        source TEXT NOT NULL DEFAULT '1',
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         week_key TEXT NOT NULL
       );
@@ -363,14 +363,14 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS members (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
-        source TEXT NOT NULL DEFAULT 'CNCC'
+        source TEXT NOT NULL DEFAULT '1'
       );
     `)
 
     const sqliteDb = (db as SqliteDb).getRawDb()
     const alterStatements = [
       'ALTER TABLE registrations ADD COLUMN class_date TEXT',
-      'ALTER TABLE registrations ADD COLUMN source TEXT NOT NULL DEFAULT \'CNCC\'',
+      'ALTER TABLE registrations ADD COLUMN source TEXT NOT NULL DEFAULT \'1\'',
       'ALTER TABLE registrations ADD COLUMN check_in_type TEXT',
       'ALTER TABLE registrations ADD COLUMN check_in_time TEXT',
       'ALTER TABLE registrations ADD COLUMN reject_reason TEXT',
@@ -400,6 +400,28 @@ async function initDb() {
         UNIQUE(week_key, class_day)
       );
     `)
+  }
+
+  if (isPostgres()) {
+    for (const stmt of [
+      `ALTER TABLE registrations ALTER COLUMN source SET DEFAULT '1'`,
+      `ALTER TABLE members ALTER COLUMN source SET DEFAULT '1'`,
+    ]) {
+      try {
+        await db.exec(stmt)
+      } catch {
+      }
+    }
+  }
+
+  const sourceMigration: Array<[string, string]> = [
+    ['CNCC', '1'],
+    ['CFID', '2'],
+    ['SQQ', '3'],
+  ]
+  for (const [oldVal, newVal] of sourceMigration) {
+    await db.prepare('UPDATE members SET source = ? WHERE UPPER(source) = ?').run(newVal, oldVal)
+    await db.prepare('UPDATE registrations SET source = ? WHERE UPPER(source) = ?').run(newVal, oldVal)
   }
 
   await db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
