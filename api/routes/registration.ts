@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express'
 import crypto from 'crypto'
 import { getDb, getWeekKey, isRegistrationOpen, getNextOpenTime, getCloseTime, getClassDate, getWeekDates, getSetting, setSetting, getBeijingTimeString } from '../db.js'
+import { encryptField, decryptField, fieldHash } from '../crypto.js'
 
 const router = Router()
 
@@ -75,7 +76,8 @@ router.get('/check-member', async (req: Request, res: Response): Promise<void> =
   try {
     const name = (req.query.name as string || '').trim()
     const db = getDb()
-    const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
+    // name 已加密存储，按确定性 name_hash 查询
+    const member = await db.prepare('SELECT * FROM members WHERE name_hash = ?').get(fieldHash(name.trim())) as { name: string; source: string } | undefined
 
     if (!member) {
       res.json({ isValid: false, message: '您不是网球小组成员，请联系网球小组组长' })
@@ -84,8 +86,8 @@ router.get('/check-member', async (req: Request, res: Response): Promise<void> =
 
     const weekKey = getWeekKey()
     const existingDays = await db.prepare(
-      'SELECT class_day FROM registrations WHERE week_key = ? AND name = ?'
-    ).all(weekKey, name.trim()) as Array<{ class_day: string }>
+      'SELECT class_day FROM registrations WHERE week_key = ? AND name_hash = ?'
+    ).all(weekKey, fieldHash(name)) as Array<{ class_day: string }>
 
     res.json({
       isValid: true,
@@ -107,7 +109,8 @@ router.post('/check-member', async (req: Request, res: Response): Promise<void> 
       return
     }
     const db = getDb()
-    const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name) as { name: string; source: string } | undefined
+    // name 已加密存储，按确定性 name_hash 查询
+    const member = await db.prepare('SELECT * FROM members WHERE name_hash = ?').get(fieldHash(name.trim())) as { name: string; source: string } | undefined
 
     if (!member) {
       res.json({ isValid: false, message: '您不是网球小组成员，请联系网球小组组长' })
@@ -116,8 +119,8 @@ router.post('/check-member', async (req: Request, res: Response): Promise<void> 
 
     const weekKey = getWeekKey()
     const existingDays = await db.prepare(
-      'SELECT class_day FROM registrations WHERE week_key = ? AND name = ?'
-    ).all(weekKey, name.trim()) as Array<{ class_day: string }>
+      'SELECT class_day FROM registrations WHERE week_key = ? AND name_hash = ?'
+    ).all(weekKey, fieldHash(name)) as Array<{ class_day: string }>
 
     res.json({
       isValid: true,
@@ -175,7 +178,8 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
   const db = getDb()
   const weekKey = getWeekKey()
 
-  const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
+  // name 已加密存储，按确定性 name_hash 查询
+  const member = await db.prepare('SELECT * FROM members WHERE name_hash = ?').get(fieldHash(name.trim())) as { name: string; source: string } | undefined
   if (!member) {
     res.status(403).json({ success: false, message: '您不是网球小组成员，请联系网球小组组长' })
     return
@@ -192,8 +196,8 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 
   if (!multiDayEnabled) {
     const anyExisting = await db.prepare(
-      'SELECT id, class_day FROM registrations WHERE week_key = ? AND name = ? LIMIT 1'
-    ).get(weekKey, name.trim()) as { id: number; class_day: string } | undefined
+      'SELECT id, class_day FROM registrations WHERE week_key = ? AND name_hash = ? LIMIT 1'
+    ).get(weekKey, fieldHash(name.trim())) as { id: number; class_day: string } | undefined
 
     if (anyExisting) {
       const existingLabel = anyExisting.class_day === 'tuesday' ? '周二' : '周三'
@@ -207,8 +211,8 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 
   for (const day of days) {
     const existing = await db.prepare(
-      'SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? LIMIT 1'
-    ).get(weekKey, name.trim(), day) as { id: number } | undefined
+      'SELECT id FROM registrations WHERE week_key = ? AND name_hash = ? AND class_day = ? LIMIT 1'
+    ).get(weekKey, fieldHash(name.trim()), day) as { id: number } | undefined
 
     if (existing) {
       const dayLabel = day === 'tuesday' ? '周二' : '周三'
@@ -230,8 +234,8 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     const classDate = getClassDate(day)
 
     await db.prepare(
-      'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(name.trim(), '', day, classDate, member.source, weekKey, getBeijingTimeString())
+      'INSERT INTO registrations (name, name_hash, phone, phone_hash, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(encryptField(name.trim()), fieldHash(name.trim()), '', fieldHash(''), day, classDate, member.source, weekKey, getBeijingTimeString())
 
     results.push({ classDay: day, classDate, success: true })
   }
@@ -321,7 +325,7 @@ router.get('/registrations', async (req: Request, res: Response): Promise<void> 
     const isWalkIn = r.check_in_type === 'walkin' || r.check_in_type === 'applied_walkin'
     return {
       id: r.id,
-      name: r.name,
+      name: decryptField(r.name),
       classDay: r.class_day,
       classDate: r.class_date,
       source: r.source,
@@ -408,7 +412,7 @@ router.post('/registrations/import', async (req: Request, res: Response): Promis
       continue
     }
 
-    const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name) as any
+    const member = await db.prepare('SELECT * FROM members WHERE name_hash = ?').get(fieldHash(name)) as any
     if (!member) {
       errors.push(`第${i + 1}行：成员"${name}"不在名单中，跳过`)
       continue
@@ -417,19 +421,21 @@ router.post('/registrations/import', async (req: Request, res: Response): Promis
     const finalSource = source || member.source
     const classDate = getClassDate(mappedDay, weekKey)
 
-    const exists = await db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name = ? AND class_day = ?').get(weekKey, name, mappedDay)
+    const exists = await db.prepare('SELECT id FROM registrations WHERE week_key = ? AND name_hash = ? AND class_day = ?').get(weekKey, fieldHash(name), mappedDay)
     if (exists) {
       await db.prepare('DELETE FROM registrations WHERE id = ?').run((exists as any).id)
       errors.push(`第${i + 1}行："${name}"${mappedDay === 'tuesday' ? '周二' : '周三'}原有记录已覆盖`)
     }
 
     try {
+      // 导入保持明文 CSV 入口，落库时加密（name_hash 保证同人去重/覆盖判断在加密后依然有效）
+      const nameHash = fieldHash(name)
       const sql = checkInType
-        ? 'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        : 'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ? 'INSERT INTO registrations (name, name_hash, phone, phone_hash, class_day, class_date, source, week_key, created_at, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        : 'INSERT INTO registrations (name, name_hash, phone, phone_hash, class_day, class_date, source, week_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       const params = checkInType
-        ? [name, phone, mappedDay, classDate, finalSource, weekKey, createdAt, checkInType, checkInTime]
-        : [name, phone, mappedDay, classDate, finalSource, weekKey, createdAt]
+        ? [encryptField(name), nameHash, encryptField(phone), fieldHash(phone), mappedDay, classDate, finalSource, weekKey, createdAt, checkInType, checkInTime]
+        : [encryptField(name), nameHash, encryptField(phone), fieldHash(phone), mappedDay, classDate, finalSource, weekKey, createdAt]
       await db.prepare(sql).run(...params)
       success++
     } catch (e: any) {
@@ -479,8 +485,8 @@ router.post('/walk-in', async (req: Request, res: Response): Promise<void> => {
   const timeStr = getBeijingTimeString()
 
   await db.prepare(
-    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name.trim(), '', classDay, classDate, source, weekKey, 'walkin', timeStr)
+    'INSERT INTO registrations (name, name_hash, phone, phone_hash, class_day, class_date, source, week_key, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(encryptField(name.trim()), fieldHash(name.trim()), '', fieldHash(''), classDay, classDate, source, weekKey, 'walkin', timeStr)
 
   res.json({ success: true, message: '临时签到成功', checkInTime: timeStr })
 })
@@ -494,15 +500,16 @@ router.post('/apply-checkin', async (req: Request, res: Response): Promise<void>
   const db = getDb()
   const weekKey = getWeekKey()
 
-  const member = await db.prepare('SELECT * FROM members WHERE name = ?').get(name.trim()) as { name: string; source: string } | undefined
+  // name 已加密存储，按确定性 name_hash 查询
+  const member = await db.prepare('SELECT * FROM members WHERE name_hash = ?').get(fieldHash(name.trim())) as { name: string; source: string } | undefined
   if (!member) {
     res.status(403).json({ success: false, message: '您不是网球小组成员，请联系网球小组组长' })
     return
   }
 
   const existing = await db.prepare(
-    'SELECT id, check_in_type FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? ORDER BY id DESC LIMIT 1'
-  ).get(weekKey, name.trim(), classDay) as { id: number; check_in_type: string | null } | undefined
+    'SELECT id, check_in_type FROM registrations WHERE week_key = ? AND name_hash = ? AND class_day = ? ORDER BY id DESC LIMIT 1'
+  ).get(weekKey, fieldHash(name.trim()), classDay) as { id: number; check_in_type: string | null } | undefined
 
   if (existing) {
     if (existing.check_in_type === 'applied' || existing.check_in_type === 'applied_scheduled' || existing.check_in_type === 'applied_walkin') {
@@ -530,8 +537,8 @@ router.post('/apply-checkin', async (req: Request, res: Response): Promise<void>
 
   // 无报名记录 → 标记为临时签到申请（报名时间留空）
   await db.prepare(
-    'INSERT INTO registrations (name, phone, class_day, class_date, source, week_key, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name.trim(), '', classDay, classDate, member.source, weekKey, 'applied_walkin', timeStr)
+    'INSERT INTO registrations (name, name_hash, phone, phone_hash, class_day, class_date, source, week_key, check_in_type, check_in_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(encryptField(name.trim()), fieldHash(name.trim()), '', fieldHash(''), classDay, classDate, member.source, weekKey, 'applied_walkin', timeStr)
 
   res.json({ success: true, message: '签到申请已提交，请等待管理员审批' })
 })
@@ -546,8 +553,8 @@ router.post('/checkin-result', async (req: Request, res: Response): Promise<void
   const weekKey = getWeekKey()
 
   const records = await db.prepare(
-    'SELECT class_day, check_in_type, check_in_time, reject_reason FROM registrations WHERE week_key = ? AND name = ? AND check_in_type IS NOT NULL AND check_in_type IN (?, ?, ?, ?, ?, ?) ORDER BY class_day'
-  ).all(weekKey, name.trim(), 'applied', 'applied_scheduled', 'applied_walkin', 'approved', 'rejected', 'walkin') as Array<{
+    'SELECT class_day, check_in_type, check_in_time, reject_reason FROM registrations WHERE week_key = ? AND name_hash = ? AND check_in_type IS NOT NULL AND check_in_type IN (?, ?, ?, ?, ?, ?) ORDER BY class_day'
+  ).all(weekKey, fieldHash(name.trim()), 'applied', 'applied_scheduled', 'applied_walkin', 'approved', 'rejected', 'walkin') as Array<{
     class_day: string
     check_in_type: string
     check_in_time: string | null
@@ -612,10 +619,10 @@ router.post('/checkin-review', async (req: Request, res: Response): Promise<void
     } else if (registration.check_in_type === 'applied_walkin') {
       approvedType = 'walkin'
     } else {
-      // 兼容旧的 applied 类型：根据是否有报名记录判断
+      // 兼容旧的 applied 类型：根据是否有报名记录判断（name 已加密，按 name_hash 匹配）
       const hasScheduled = await db.prepare(
-        'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name = ? AND class_day = ? AND check_in_type IS NULL'
-      ).get(registration.week_key, registration.name, registration.class_day) as { cnt: number }
+        'SELECT COUNT(*) as cnt FROM registrations WHERE week_key = ? AND name_hash = ? AND class_day = ? AND check_in_type IS NULL'
+      ).get(registration.week_key, registration.name_hash, registration.class_day) as { cnt: number }
       approvedType = hasScheduled.cnt > 0 ? 'scheduled' : 'walkin'
     }
 
@@ -728,17 +735,22 @@ router.get('/members', async (req: Request, res: Response): Promise<void> => {
     params.push(sourceFilter)
   }
 
-  sql += ' ORDER BY '
-  if (sort === 'source') {
-    sql += 'source, name'
-  } else if (sort === 'name') {
-    sql += 'name'
-  } else {
-    sql += 'id'
+  sql += ' ORDER BY id'
+
+  // name 已加密存储，SQL 无法按 name 排序，取回后解密再在 JS 中排序
+  const members = await db.prepare(sql).all(...params) as Array<{ id: number; name: string; source: string }>
+  const decrypted = members.map(m => {
+    const name = decryptField(m.name)
+    return { id: m.id, name, source: m.source }
+  })
+
+  if (sort === 'name') {
+    decrypted.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+  } else if (sort === 'source') {
+    decrypted.sort((a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name, 'zh'))
   }
 
-  const members = await db.prepare(sql).all(...params) as Array<{ id: number; name: string; source: string }>
-  res.json({ members: members })
+  res.json({ members: decrypted })
 })
 
 router.post('/members/import', async (req: Request, res: Response): Promise<void> => {
@@ -752,9 +764,16 @@ router.post('/members/import', async (req: Request, res: Response): Promise<void
   const db = getDb()
   let successCount = 0
   for (const m of data || []) {
-    if (m.name && m.source && ['1', '2', '3'].includes(m.source)) {
-      await db.prepare('INSERT OR REPLACE INTO members (name, source) VALUES (?, ?)')
-        .run(m.name.trim(), m.source)
+    const name = (m.name || '').trim()
+    if (name && m.source && ['1', '2', '3'].includes(m.source)) {
+      // name 已加密存储，按 name_hash 判重：已存在则更新来源，否则插入（导入保持明文入口，幂等不产生重复行）
+      const nameHash = fieldHash(name)
+      const existing = await db.prepare('SELECT id FROM members WHERE name_hash = ?').get(nameHash) as { id: number } | undefined
+      if (existing) {
+        await db.prepare('UPDATE members SET source = ? WHERE id = ?').run(m.source, existing.id)
+      } else {
+        await db.prepare('INSERT INTO members (name, name_hash, source) VALUES (?, ?, ?)').run(encryptField(name), nameHash, m.source)
+      }
       successCount++
     }
   }
@@ -777,7 +796,7 @@ router.get('/members/export', async (req: Request, res: Response): Promise<void>
   const members = await db.prepare('SELECT * FROM members ORDER BY id').all() as Array<{ name: string; source: string }>
   const bom = '\uFEFF'
   const header = '姓名,来自'
-  const rows = members.map(m => `${m.name},${m.source}`).join('\n')
+  const rows = members.map(m => `${decryptField(m.name)},${m.source}`).join('\n')
   const csv = `${bom}${header}\n${rows}`
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
@@ -809,12 +828,13 @@ router.post('/members/add', async (req: Request, res: Response): Promise<void> =
     return
   }
   const db = getDb()
-  const existing = await db.prepare('SELECT id FROM members WHERE name = ?').get(name.trim())
+  // name 已加密存储，按 name_hash 判重与写入
+  const existing = await db.prepare('SELECT id FROM members WHERE name_hash = ?').get(fieldHash(name.trim()))
   if (existing) {
     res.status(400).json({ success: false, message: '该成员已存在' })
     return
   }
-  await db.prepare('INSERT INTO members (name, source) VALUES (?, ?)').run(name.trim(), source)
+  await db.prepare('INSERT INTO members (name, name_hash, source) VALUES (?, ?, ?)').run(encryptField(name.trim()), fieldHash(name.trim()), source)
   res.json({ success: true, message: '成员已添加' })
 })
 
@@ -830,12 +850,13 @@ router.post('/members/update', async (req: Request, res: Response): Promise<void
     return
   }
   const db = getDb()
-  const dup = await db.prepare('SELECT id FROM members WHERE name = ? AND id != ?').get(name.trim(), id)
+  // name 已加密存储，按 name_hash 判重与写入
+  const dup = await db.prepare('SELECT id FROM members WHERE name_hash = ? AND id != ?').get(fieldHash(name.trim()), id)
   if (dup) {
     res.status(400).json({ success: false, message: '该姓名已被其他成员使用' })
     return
   }
-  await db.prepare('UPDATE members SET name = ?, source = ? WHERE id = ?').run(name.trim(), source, id)
+  await db.prepare('UPDATE members SET name = ?, name_hash = ?, source = ? WHERE id = ?').run(encryptField(name.trim()), fieldHash(name.trim()), source, id)
   res.json({ success: true, message: '成员已更新' })
 })
 
@@ -882,7 +903,7 @@ router.post('/export-all', async (req: Request, res: Response): Promise<void> =>
   const header = '姓名,来自,上课日,上课日期,报名日期,所属周,签到类型,签到时间'
   const rows = registrations.map(r => {
     const isWalkIn = r.check_in_type === 'walkin' || r.check_in_type === 'applied_walkin'
-    return `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${isWalkIn ? '' : r.created_at},${r.week_key},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
+    return `${decryptField(r.name)},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${isWalkIn ? '' : r.created_at},${r.week_key},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
   }).join('\n')
 
   const bom = '\uFEFF'
@@ -929,7 +950,7 @@ router.get('/export', async (req: Request, res: Response): Promise<void> => {
   const header = '姓名,来自,上课日,上课日期,报名时间,签到类型,签到时间'
   const rows = registrations.map(r => {
     const isWalkIn = r.check_in_type === 'walkin' || r.check_in_type === 'applied_walkin'
-    return `${r.name},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${isWalkIn ? '' : r.created_at},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
+    return `${decryptField(r.name)},${r.source},${dayMap[r.class_day] || r.class_day},${r.class_date || ''},${isWalkIn ? '' : r.created_at},${checkInMap[r.check_in_type || ''] || ''},${r.check_in_time || ''}`
   }).join('\n')
 
   const bom = '\uFEFF'
@@ -948,23 +969,18 @@ router.get('/statistics', async (req: Request, res: Response): Promise<void> => 
   const sortBy = (req.query.sortBy as string) || ''
   const db = getDb()
 
-  const allowedSort = ['source', 'tuesday', 'wednesday', 'total']
-  let orderClause = 'total_count DESC, m.name'
-  if (sortBy === 'source') orderClause = 'm.source ASC, m.name'
-  else if (sortBy === 'tuesday') orderClause = 'tuesday_count DESC, m.name'
-  else if (sortBy === 'wednesday') orderClause = 'wednesday_count DESC, m.name'
-
   const weekCondition = mode === 'week' && week ? 'week_key = ?' : 'week_key LIKE ?'
   const weekParam = mode === 'week' && week ? week : `${year}%`
 
-  const data = await db.prepare(`
+  // name 已加密，SQL 无法按 name 分组/JOIN/排序：改用 name_hash 分组关联，取回后解密并在 JS 中排序
+  const rows = await db.prepare(`
     SELECT m.name, m.source,
       COALESCE(r.total_count, 0) as total_count,
       COALESCE(r.tuesday_count, 0) as tuesday_count,
       COALESCE(r.wednesday_count, 0) as wednesday_count
     FROM members m
     LEFT JOIN (
-      SELECT name,
+      SELECT name_hash,
         COUNT(*) as total_count,
         SUM(CASE WHEN class_day = 'tuesday' THEN 1 ELSE 0 END) as tuesday_count,
         SUM(CASE WHEN class_day = 'wednesday' THEN 1 ELSE 0 END) as wednesday_count
@@ -975,10 +991,27 @@ router.get('/statistics', async (req: Request, res: Response): Promise<void> => 
           OR (check_in_type = ?)
           OR (? = 'booked' AND (check_in_type IS NULL OR check_in_type = 'scheduled'))
         )
-      GROUP BY name
-    ) r ON m.name = r.name
-    ORDER BY ${orderClause}
-  `).all(weekParam, checkInFilter, checkInFilter, checkInFilter)
+      GROUP BY name_hash
+    ) r ON m.name_hash = r.name_hash
+  `).all(weekParam, checkInFilter, checkInFilter, checkInFilter) as Array<{
+    name: string
+    source: string
+    total_count: number
+    tuesday_count: number
+    wednesday_count: number
+  }>
+
+  const data = rows.map(row => ({ ...row, name: decryptField(row.name) }))
+
+  if (sortBy === 'source') {
+    data.sort((a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name, 'zh'))
+  } else if (sortBy === 'tuesday') {
+    data.sort((a, b) => b.tuesday_count - a.tuesday_count || a.name.localeCompare(b.name, 'zh'))
+  } else if (sortBy === 'wednesday') {
+    data.sort((a, b) => b.wednesday_count - a.wednesday_count || a.name.localeCompare(b.name, 'zh'))
+  } else {
+    data.sort((a, b) => b.total_count - a.total_count || a.name.localeCompare(b.name, 'zh'))
+  }
 
   res.json({ mode, year, week: week || '', data })
 })

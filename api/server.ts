@@ -1,3 +1,5 @@
+// 必须最先加载 .env（ESM import 按声明顺序执行），再初始化 app/db
+import './env.js'
 import app from './app.js'
 
 const PORT = Number(process.env.PORT) || 3001

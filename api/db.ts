@@ -3,6 +3,7 @@ import pg from 'pg'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { encryptField, fieldHash, isEncryptionEnabled } from './crypto.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -28,7 +29,8 @@ let initRejected = false
 
 const tableConflictColumns: Record<string, string[]> = {
   settings: ['key'],
-  members: ['name'],
+  // 加密后 name 是随机密文，唯一性由 name_hash 保证
+  members: ['name_hash'],
   class_cancellations: ['week_key', 'class_day'],
 }
 
@@ -285,7 +287,9 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS registrations (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
+        name_hash VARCHAR(64),
         phone VARCHAR(255) NOT NULL,
+        phone_hash VARCHAR(64),
         class_day VARCHAR(20) NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
         class_date VARCHAR(50),
         source VARCHAR(50) NOT NULL DEFAULT '1',
@@ -300,7 +304,8 @@ async function initDb() {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS members (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL UNIQUE,
+        name VARCHAR(255) NOT NULL,
+        name_hash VARCHAR(64),
         source VARCHAR(50) NOT NULL DEFAULT '1'
       );
     `)
@@ -311,6 +316,9 @@ async function initDb() {
       { table: 'registrations', column: 'check_in_type', type: 'VARCHAR(50)' },
       { table: 'registrations', column: 'check_in_time', type: 'VARCHAR(50)' },
       { table: 'registrations', column: 'reject_reason', type: 'TEXT' },
+      { table: 'registrations', column: 'name_hash', type: 'VARCHAR(64)' },
+      { table: 'registrations', column: 'phone_hash', type: 'VARCHAR(64)' },
+      { table: 'members', column: 'name_hash', type: 'VARCHAR(64)' },
     ]
 
     for (const col of columnsToAdd) {
@@ -319,6 +327,26 @@ async function initDb() {
         await db.exec(`ALTER TABLE ${col.table} ADD COLUMN IF NOT EXISTS ${col.column} ${col.type}${defaultSql}`)
       } catch {
       }
+    }
+
+    // 加密支持：hash 查询列索引；members 唯一性从 name 迁移到 name_hash（加密后同一明文密文随机，name 上的 UNIQUE 失去意义）
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_name_hash ON registrations(name_hash)`)
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_phone_hash ON registrations(phone_hash)`)
+    try {
+      await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_members_name_hash_unique ON members(name_hash)`)
+    } catch (e) {
+      console.error('创建 members(name_hash) 唯一索引失败（可能存在历史重名数据）', e)
+    }
+    try {
+      const uniqConstraints = await db.prepare(`SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'members'::regclass AND contype = 'u'`).all() as any[]
+      for (const c of uniqConstraints) {
+        if (c?.conname && typeof c.def === 'string' && /\(\s*name\s*\)/i.test(c.def)) {
+          await db.exec(`ALTER TABLE members DROP CONSTRAINT IF EXISTS "${c.conname}"`)
+          console.log(`已删除 members 旧唯一约束 ${c.conname}（唯一性改由 name_hash 保证）`)
+        }
+      }
+    } catch (e) {
+      console.error('清理 members.name 旧唯一约束失败', e)
     }
 
     await db.exec(`
@@ -347,7 +375,9 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS registrations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
+        name_hash TEXT,
         phone TEXT NOT NULL,
+        phone_hash TEXT,
         class_day TEXT NOT NULL CHECK(class_day IN ('tuesday', 'wednesday')),
         class_date TEXT,
         source TEXT NOT NULL DEFAULT '1',
@@ -362,7 +392,8 @@ async function initDb() {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS members (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        name_hash TEXT,
         source TEXT NOT NULL DEFAULT '1'
       );
     `)
@@ -374,6 +405,9 @@ async function initDb() {
       'ALTER TABLE registrations ADD COLUMN check_in_type TEXT',
       'ALTER TABLE registrations ADD COLUMN check_in_time TEXT',
       'ALTER TABLE registrations ADD COLUMN reject_reason TEXT',
+      'ALTER TABLE registrations ADD COLUMN name_hash TEXT',
+      'ALTER TABLE registrations ADD COLUMN phone_hash TEXT',
+      'ALTER TABLE members ADD COLUMN name_hash TEXT',
     ]
 
     for (const stmt of alterStatements) {
@@ -381,6 +415,36 @@ async function initDb() {
         sqliteDb.exec(stmt)
       } catch {
       }
+    }
+
+    // 旧库迁移：members 若带 name UNIQUE 表级约束，SQLite 无法直接删除，需重建表
+    try {
+      const membersTableSql = sqliteDb.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'members'`).get() as { sql?: string } | undefined
+      if (membersTableSql?.sql && /name\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(membersTableSql.sql)) {
+        sqliteDb.exec(`DROP TABLE IF EXISTS members_new`)
+        sqliteDb.exec(`
+          CREATE TABLE members_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            name_hash TEXT,
+            source TEXT NOT NULL DEFAULT '1'
+          );
+        `)
+        sqliteDb.exec(`INSERT INTO members_new (id, name, name_hash, source) SELECT id, name, name_hash, source FROM members`)
+        sqliteDb.exec(`DROP TABLE members`)
+        sqliteDb.exec(`ALTER TABLE members_new RENAME TO members`)
+        console.log('members 表已重建：唯一性约束从 name 迁移到 name_hash')
+      }
+    } catch (e) {
+      console.error('members 表重建失败', e)
+    }
+
+    sqliteDb.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_name_hash ON registrations(name_hash)`)
+    sqliteDb.exec(`CREATE INDEX IF NOT EXISTS idx_registrations_phone_hash ON registrations(phone_hash)`)
+    try {
+      sqliteDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_members_name_hash_unique ON members(name_hash)`)
+    } catch (e) {
+      console.error('创建 members(name_hash) 唯一索引失败（可能存在历史重名数据）', e)
     }
 
     await db.exec(`
@@ -422,6 +486,61 @@ async function initDb() {
   for (const [oldVal, newVal] of sourceMigration) {
     await db.prepare('UPDATE members SET source = ? WHERE UPPER(source) = ?').run(newVal, oldVal)
     await db.prepare('UPDATE registrations SET source = ? WHERE UPPER(source) = ?').run(newVal, oldVal)
+  }
+
+  // 姓名加密迁移（幂等，每次启动执行）：
+  // 1) 先补齐 name_hash/phone_hash（无论是否配置密钥，查询与去重都依赖 hash 列）
+  // 2) 配置了 NAME_ENCRYPTION_KEY 时，把存量明文加密为 enc:v1: 格式；未配置时保持明文（兼容模式）
+  try {
+    if (isEncryptionEnabled()) {
+      const plainRegs = await db.prepare(`SELECT id, name, phone FROM registrations WHERE name NOT LIKE 'enc:v1:%'`).all() as any[]
+      let regCount = 0
+      for (const row of plainRegs) {
+        try {
+          await db.prepare(`UPDATE registrations SET name = ?, name_hash = ?, phone = ?, phone_hash = ? WHERE id = ?`)
+            .run(encryptField(row.name), fieldHash(row.name), encryptField(row.phone), fieldHash(row.phone), row.id)
+          regCount++
+        } catch (e) {
+          console.error(`registrations 加密迁移失败 id=${row.id}`, e)
+        }
+      }
+      const plainMembers = await db.prepare(`SELECT id, name FROM members WHERE name NOT LIKE 'enc:v1:%'`).all() as any[]
+      let memberCount = 0
+      for (const row of plainMembers) {
+        try {
+          await db.prepare(`UPDATE members SET name = ?, name_hash = ? WHERE id = ?`).run(encryptField(row.name), fieldHash(row.name), row.id)
+          memberCount++
+        } catch (e) {
+          console.error(`members 加密迁移失败 id=${row.id}`, e)
+        }
+      }
+      if (regCount > 0 || memberCount > 0) {
+        console.log(`姓名加密迁移完成：registrations ${regCount} 行，members ${memberCount} 行`)
+      }
+    } else {
+      const noHashRegs = await db.prepare(`SELECT id, name, phone FROM registrations WHERE name_hash IS NULL AND name NOT LIKE 'enc:v1:%'`).all() as any[]
+      for (const row of noHashRegs) {
+        const nHash = fieldHash(row.name)
+        if (!nHash) continue
+        try {
+          await db.prepare(`UPDATE registrations SET name_hash = ?, phone_hash = ? WHERE id = ?`).run(nHash, fieldHash(row.phone), row.id)
+        } catch (e) {
+          console.error(`registrations hash 回填失败 id=${row.id}`, e)
+        }
+      }
+      const noHashMembers = await db.prepare(`SELECT id, name FROM members WHERE name_hash IS NULL AND name NOT LIKE 'enc:v1:%'`).all() as any[]
+      for (const row of noHashMembers) {
+        const nHash = fieldHash(row.name)
+        if (!nHash) continue
+        try {
+          await db.prepare(`UPDATE members SET name_hash = ? WHERE id = ?`).run(nHash, row.id)
+        } catch (e) {
+          console.error(`members hash 回填失败 id=${row.id}`, e)
+        }
+      }
+    }
+  } catch (e) {
+    console.error('数据加密/hash 迁移失败', e)
   }
 
   await db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
