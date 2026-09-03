@@ -1164,7 +1164,7 @@ async function handleLogin() {
   }
 }
 
-async function fetchWeeks() {
+async function fetchWeeks(preferWeek?: string) {
   try {
     const res = await fetch('/api/weeks')
     const data = await res.json()
@@ -1173,13 +1173,29 @@ async function fetchWeeks() {
     const currentWeek = getCurrentWeekKey()
     const allWeeks = [...new Set([...weeks, currentWeek])].sort()
     availableWeeks.value = allWeeks
-    // 默认选中当前周
+    // 导入后跳到指定周（最近有数据的周），平时默认选中当前周
+    if (preferWeek && allWeeks.includes(preferWeek)) {
+      selectedWeek.value = preferWeek
+      return
+    }
     const idx = allWeeks.indexOf(currentWeek)
     selectedWeek.value = allWeeks[Math.max(0, idx)]
   } catch {
     availableWeeks.value = [getCurrentWeekKey()]
     selectedWeek.value = getCurrentWeekKey()
   }
+}
+
+async function jumpToLatestDataWeek() {
+  try {
+    const res = await fetch('/api/weeks')
+    const data = await res.json()
+    const weeks = (data.weeks || []).sort()
+    await fetchWeeks(weeks[weeks.length - 1])
+  } catch {
+    await fetchWeeks()
+  }
+  fetchRegistrations()
 }
 
 async function fetchRegistrations() {
@@ -1802,7 +1818,7 @@ async function doImport() {
       importResult.value = data
       if (data.imported > 0) {
         showNotification(`成功导入 ${data.imported} 条报名记录`)
-        fetchRegistrations()
+        await jumpToLatestDataWeek()
         if (data.errors.length === 0) {
           closeImportModal()
         }
